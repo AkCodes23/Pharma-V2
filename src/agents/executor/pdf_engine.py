@@ -1,0 +1,495 @@
+"""
+Pharma Agentic AI — Executor: PDF Engine.
+
+Converts Markdown executive reports to branded PDF documents
+using WeasyPrint. Embeds base64 charts, citation tables, and
+a branded cover page. Uploads final PDF to Azure Blob Storage.
+
+Architecture context:
+  - Service: Executor Agent (sub-component)
+  - Responsibility: PDF artifact generation + Blob upload
+  - Upstream: ReportGenerator (markdown + charts)
+  - Downstream: Azure Blob Storage
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from src.shared.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+# ── Premium PDF HTML Template ───────────────────────────────
+
+PDF_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  :root {{
+    --bg: #0a0e1a;
+    --card: #0f1629;
+    --text: #f8fafc;
+    --text-muted: #94a3b8;
+    --accent: #6366f1;
+    --accent2: #8b5cf6;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --border: rgba(148, 163, 184, 0.12);
+  }}
+
+  @page {{
+    size: A4;
+    margin: 2cm 2.5cm;
+    @bottom-center {{
+      content: "Pharma Agentic AI — Confidential | Page " counter(page) " of " counter(pages);
+      font-family: 'Inter', sans-serif;
+      font-size: 8pt;
+      color: #64748b;
+    }}
+  }}
+
+  body {{
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #1e293b;
+    line-height: 1.7;
+    font-size: 10pt;
+  }}
+
+  /* Cover Page */
+  .cover {{
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 90vh;
+    text-align: center;
+  }}
+
+  .cover__logo {{
+    font-size: 48pt;
+    margin-bottom: 20px;
+  }}
+
+  .cover__title {{
+    font-size: 28pt;
+    font-weight: 800;
+    color: #6366f1;
+    margin-bottom: 8px;
+  }}
+
+  .cover__subtitle {{
+    font-size: 14pt;
+    color: #64748b;
+    margin-bottom: 40px;
+  }}
+
+  .cover__meta {{
+    font-size: 10pt;
+    color: #94a3b8;
+    margin-top: 20px;
+  }}
+
+  .cover__decision {{
+    display: inline-block;
+    padding: 12px 32px;
+    border-radius: 8px;
+    font-size: 18pt;
+    font-weight: 700;
+    margin: 20px 0;
+  }}
+
+  .cover__decision--go {{
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    border: 2px solid rgba(16, 185, 129, 0.3);
+  }}
+
+  .cover__decision--no-go {{
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+    border: 2px solid rgba(239, 68, 68, 0.3);
+  }}
+
+  .cover__decision--conditional {{
+    background: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+    border: 2px solid rgba(245, 158, 11, 0.3);
+  }}
+
+  /* Content */
+  h1 {{
+    font-size: 20pt;
+    font-weight: 800;
+    color: #6366f1;
+    border-bottom: 2px solid #6366f1;
+    padding-bottom: 6px;
+    margin-top: 24px;
+    margin-bottom: 12px;
+  }}
+
+  h2 {{
+    font-size: 14pt;
+    font-weight: 700;
+    color: #1e293b;
+    margin-top: 20px;
+    margin-bottom: 8px;
+  }}
+
+  h3 {{
+    font-size: 12pt;
+    font-weight: 600;
+    color: #6366f1;
+    margin-top: 16px;
+    margin-bottom: 6px;
+  }}
+
+  table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 9pt;
+  }}
+
+  th {{
+    background: #f1f5f9;
+    font-weight: 600;
+    text-align: left;
+    padding: 8px 10px;
+    border: 1px solid #e2e8f0;
+  }}
+
+  td {{
+    padding: 6px 10px;
+    border: 1px solid #e2e8f0;
+  }}
+
+  tr:nth-child(even) {{
+    background: #f8fafc;
+  }}
+
+  /* Risk Box */
+  .risk-box {{
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-left: 4px solid #ef4444;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 12px 0;
+  }}
+
+  .risk-box__title {{
+    font-weight: 700;
+    color: #ef4444;
+    font-size: 10pt;
+  }}
+
+  /* Citation */
+  .citation {{
+    background: #f0f4ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 7pt;
+    color: #6366f1;
+  }}
+
+  /* Chart container */
+  .chart-container {{
+    text-align: center;
+    margin: 16px 0;
+    page-break-inside: avoid;
+  }}
+
+  .chart-container img {{
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+  }}
+
+  /* Footer */
+  .disclaimer {{
+    font-size: 7pt;
+    color: #94a3b8;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 12px;
+    margin-top: 40px;
+  }}
+</style>
+</head>
+<body>
+
+<!-- Cover Page -->
+<div class="cover">
+  <div class="cover__logo">🧬</div>
+  <div class="cover__title">Strategic Assessment Report</div>
+  <div class="cover__subtitle">{query}</div>
+  <div class="cover__decision cover__decision--{decision_class}">{decision}</div>
+  <div class="cover__meta">
+    Generated by Pharma Agentic AI<br>
+    {timestamp}<br>
+    Session: {session_id}
+  </div>
+</div>
+
+<!-- Report Content -->
+{report_html}
+
+<!-- Citation Registry -->
+<h1>Citation Registry</h1>
+<table>
+  <tr>
+    <th>#</th>
+    <th>Source</th>
+    <th>URL</th>
+    <th>Retrieved</th>
+    <th>SHA-256</th>
+  </tr>
+  {citation_rows}
+</table>
+
+<!-- Disclaimer -->
+<div class="disclaimer">
+  <strong>CONFIDENTIAL</strong> — This document was generated by an automated AI system.
+  All findings are derived from cited sources. No parametric (hallucinated) data was used.
+  This report does not constitute legal, medical, or financial advice.
+  Verify all data independently before making strategic decisions.
+</div>
+
+</body>
+</html>"""
+
+
+class PDFEngine:
+    """
+    Generates executive PDF reports from Markdown + charts.
+
+    Uses WeasyPrint for PDF rendering (server-side, no GUI).
+    Uploads final PDF to Azure Blob Storage.
+    """
+
+    def __init__(self) -> None:
+        self._settings = get_settings()
+
+    def render_pdf(
+        self,
+        report_markdown: str,
+        session_id: str,
+        query: str,
+        decision: str,
+        citations: list[dict[str, Any]],
+    ) -> bytes:
+        """
+        Render Markdown report to PDF bytes.
+
+        Args:
+            report_markdown: The full report in Markdown.
+            session_id: Session identifier for cover page.
+            query: Original query for cover page.
+            decision: GO/NO_GO/CONDITIONAL_GO.
+            citations: List of citation dicts for registry table.
+
+        Returns:
+            PDF as bytes.
+        """
+        # Lazy import to avoid import errors if weasyprint not installed
+        try:
+            from weasyprint import HTML as WeasyHTML
+        except ImportError:
+            logger.warning("WeasyPrint not installed — returning empty PDF")
+            return b""
+
+        # Convert markdown to basic HTML
+        report_html = self._markdown_to_html(report_markdown)
+
+        # Build citation table rows
+        citation_rows = self._build_citation_rows(citations)
+
+        # Determine decision CSS class
+        decision_class = "conditional"
+        if decision == "GO":
+            decision_class = "go"
+        elif decision == "NO_GO":
+            decision_class = "no-go"
+
+        # Fill template
+        html_content = PDF_TEMPLATE.format(
+            query=query,
+            decision=decision.replace("_", " "),
+            decision_class=decision_class,
+            session_id=session_id[:12],
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            report_html=report_html,
+            citation_rows=citation_rows,
+        )
+
+        # Render PDF
+        pdf_bytes = WeasyHTML(string=html_content).write_pdf()
+
+        logger.info(
+            "PDF rendered",
+            extra={"session_id": session_id, "pdf_size_bytes": len(pdf_bytes)},
+        )
+
+        return pdf_bytes
+
+    def upload_to_blob(self, pdf_bytes: bytes, session_id: str) -> str:
+        """
+        Upload PDF to Azure Blob Storage.
+
+        Args:
+            pdf_bytes: The rendered PDF content.
+            session_id: Used as the blob name prefix.
+
+        Returns:
+            Blob URL string.
+        """
+        try:
+            from azure.storage.blob import BlobServiceClient
+        except ImportError:
+            logger.warning("azure-storage-blob not available — skipping upload")
+            return f"/local/reports/{session_id}.pdf"
+
+        blob_name = f"reports/{session_id}/{session_id}_executive_report.pdf"
+
+        try:
+            client = BlobServiceClient.from_connection_string(
+                self._settings.blob_storage_connection_string
+            )
+            container = client.get_container_client(
+                self._settings.blob_storage_reports_container
+            )
+            blob = container.get_blob_client(blob_name)
+            blob.upload_blob(
+                pdf_bytes,
+                overwrite=True,
+                content_settings={
+                    "content_type": "application/pdf",
+                    "content_disposition": f"inline; filename={session_id}_report.pdf",
+                },
+            )
+
+            blob_url = blob.url
+            logger.info(
+                "PDF uploaded to Blob Storage",
+                extra={"blob_url": blob_url, "size": len(pdf_bytes)},
+            )
+            return blob_url
+
+        except Exception:
+            logger.exception("Blob upload failed")
+            return f"/local/reports/{session_id}.pdf"
+
+    def _markdown_to_html(self, md: str) -> str:
+        """
+        Convert Markdown to HTML for PDF rendering.
+
+        Simple conversion — handles headers, bold, lists, images.
+        For production, use a full Markdown parser (e.g., mistune).
+        """
+        lines = md.split("\n")
+        html_parts: list[str] = []
+        in_list = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Headers
+            if stripped.startswith("### "):
+                if in_list:
+                    html_parts.append("</ul>")
+                    in_list = False
+                html_parts.append(f"<h3>{stripped[4:]}</h3>")
+            elif stripped.startswith("## "):
+                if in_list:
+                    html_parts.append("</ul>")
+                    in_list = False
+                html_parts.append(f"<h2>{stripped[3:]}</h2>")
+            elif stripped.startswith("# "):
+                if in_list:
+                    html_parts.append("</ul>")
+                    in_list = False
+                html_parts.append(f"<h1>{stripped[2:]}</h1>")
+
+            # Images (base64 charts)
+            elif stripped.startswith("!["):
+                if in_list:
+                    html_parts.append("</ul>")
+                    in_list = False
+                alt_end = stripped.index("]")
+                url_start = stripped.index("(") + 1
+                url_end = stripped.rindex(")")
+                alt = stripped[2:alt_end]
+                url = stripped[url_start:url_end]
+                html_parts.append(
+                    f'<div class="chart-container">'
+                    f'<img src="{url}" alt="{alt}">'
+                    f'<p style="font-size:9pt;color:#64748b">{alt}</p>'
+                    f'</div>'
+                )
+
+            # List items
+            elif stripped.startswith("- ") or stripped.startswith("* "):
+                if not in_list:
+                    html_parts.append("<ul>")
+                    in_list = True
+                html_parts.append(f"<li>{stripped[2:]}</li>")
+
+            # Bold text with **
+            elif stripped:
+                if in_list:
+                    html_parts.append("</ul>")
+                    in_list = False
+                # Replace **text** with <strong>text</strong>
+                processed = stripped
+                while "**" in processed:
+                    processed = processed.replace("**", "<strong>", 1).replace("**", "</strong>", 1)
+                # Replace [Source: ...] citation blocks
+                while "[Source:" in processed:
+                    start = processed.index("[Source:")
+                    end = processed.index("]", start) + 1
+                    citation_text = processed[start:end]
+                    processed = processed[:start] + f'<span class="citation">{citation_text}</span>' + processed[end:]
+                html_parts.append(f"<p>{processed}</p>")
+
+            # Empty line
+            else:
+                if in_list:
+                    html_parts.append("</ul>")
+                    in_list = False
+
+        if in_list:
+            html_parts.append("</ul>")
+
+        return "\n".join(html_parts)
+
+    def _build_citation_rows(self, citations: list[dict[str, Any]]) -> str:
+        """Build HTML table rows for the citation registry."""
+        rows: list[str] = []
+        for i, c in enumerate(citations, 1):
+            source = c.get("source_name", c.get("source", "Unknown"))
+            url = c.get("source_url", c.get("url", "#"))
+            retrieved = c.get("retrieved_at", "")
+            if isinstance(retrieved, datetime):
+                retrieved = retrieved.strftime("%Y-%m-%d %H:%M")
+            data_hash = c.get("data_hash", "")[:16] + "..." if c.get("data_hash") else "N/A"
+
+            rows.append(
+                f"<tr>"
+                f"<td>{i}</td>"
+                f"<td>{source}</td>"
+                f'<td><a href="{url}" style="color:#6366f1;font-size:7pt">{url[:60]}...</a></td>'
+                f"<td>{retrieved}</td>"
+                f"<td><code>{data_hash}</code></td>"
+                f"</tr>"
+            )
+        return "\n".join(rows)

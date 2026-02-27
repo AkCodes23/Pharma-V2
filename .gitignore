@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Node.js (Frontend)
+node_modules/
+.next/
+out/
+.turbo/
+
+# Azure
+.azure/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Artifacts
+*.pdf
+reports/
