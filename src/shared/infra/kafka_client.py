@@ -40,12 +40,31 @@ class KafkaEventProducer:
     Publishes events to topic partitions keyed by session_id,
     guaranteeing ordered processing per session.
 
+    Supports two transport modes:
+      - Local Kafka: plain TCP (default)
+      - Azure Event Hubs: SASL_SSL on port 9093 (Kafka wire protocol)
+
     Thread-safe: AIOKafkaProducer manages connections internally.
     """
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._bootstrap_servers = settings.kafka.bootstrap_servers
+        kafka_cfg = settings.kafka
+
+        if kafka_cfg.use_event_hubs and kafka_cfg.event_hubs_namespace:
+            # Azure Event Hubs — Kafka-compatible endpoint
+            self._bootstrap_servers = f"{kafka_cfg.event_hubs_namespace}:9093"
+            self._sasl_config = {
+                "security_protocol": "SASL_SSL",
+                "sasl_mechanism": "PLAIN",
+                "sasl_plain_username": "$ConnectionString",
+                "sasl_plain_password": kafka_cfg.event_hubs_connection_string,
+            }
+        else:
+            # Local Kafka (Docker dev)
+            self._bootstrap_servers = kafka_cfg.bootstrap_servers
+            self._sasl_config = {}
+
         self._producer: AIOKafkaProducer | None = None
 
     async def start(self) -> None:
@@ -55,13 +74,20 @@ class KafkaEventProducer:
             value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
             key_serializer=lambda k: k.encode("utf-8") if k else None,
             acks="all",  # Wait for all replicas (durability)
-            enable_idempotence=True,  # Exactly-once semantics
+            enable_idempotence=not bool(self._sasl_config),  # Not supported on Event Hubs
             max_batch_size=16384,
             linger_ms=10,  # Batch for 10ms before sending
-            compression_type="lz4",
+            compression_type="lz4" if not self._sasl_config else "gzip",
+            **self._sasl_config,
         )
         await self._producer.start()
-        logger.info("KafkaEventProducer started", extra={"servers": self._bootstrap_servers})
+        logger.info(
+            "KafkaEventProducer started",
+            extra={
+                "servers": self._bootstrap_servers,
+                "event_hubs": bool(self._sasl_config),
+            },
+        )
 
     async def publish_event(
         self,
@@ -129,12 +155,26 @@ class KafkaEventConsumer:
     Consumes events from a topic and dispatches to a handler function.
     Supports consumer group for horizontal scaling.
 
+    Supports Azure Event Hubs (Kafka-compatible endpoint) via SASL_SSL.
     Thread-safe: AIOKafkaConsumer manages connections internally.
     """
 
     def __init__(self, topic: str, group_id: str) -> None:
         settings = get_settings()
-        self._bootstrap_servers = settings.kafka.bootstrap_servers
+        kafka_cfg = settings.kafka
+
+        if kafka_cfg.use_event_hubs and kafka_cfg.event_hubs_namespace:
+            self._bootstrap_servers = f"{kafka_cfg.event_hubs_namespace}:9093"
+            self._sasl_config = {
+                "security_protocol": "SASL_SSL",
+                "sasl_mechanism": "PLAIN",
+                "sasl_plain_username": "$ConnectionString",
+                "sasl_plain_password": kafka_cfg.event_hubs_connection_string,
+            }
+        else:
+            self._bootstrap_servers = kafka_cfg.bootstrap_servers
+            self._sasl_config = {}
+
         self._topic = topic
         self._group_id = group_id
         self._consumer: AIOKafkaConsumer | None = None
@@ -157,6 +197,7 @@ class KafkaEventConsumer:
             max_poll_records=10,
             session_timeout_ms=30000,
             heartbeat_interval_ms=10000,
+            **self._sasl_config,
         )
         await self._consumer.start()
         self._running = True

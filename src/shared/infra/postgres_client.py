@@ -60,21 +60,59 @@ class PostgresClient:
         Initialize the connection pool.
 
         Must be called once at application startup (e.g., in FastAPI lifespan).
+
+        Supports two modes:
+          - Local dev: standard user/password from DSN (default)
+          - Azure: Azure AD token auth + SSL (POSTGRES_USE_AZURE_AD=true)
         """
         if self._pool is not None:
             return
 
         settings = get_settings()
-        self._pool = await asyncpg.create_pool(
-            dsn=settings.postgres.url,
-            min_size=5,
-            max_size=settings.postgres.pool_size,
-            max_inactive_connection_lifetime=300.0,
-            command_timeout=30.0,
-        )
+        pg_cfg = settings.postgres
+
+        # Build connection kwargs
+        pool_kwargs: dict = {
+            "dsn": pg_cfg.url,
+            "min_size": 5,
+            "max_size": pg_cfg.pool_size,
+            "max_inactive_connection_lifetime": 300.0,
+            "command_timeout": 30.0,
+        }
+
+        # Azure DB for PostgreSQL Flexible Server: SSL + Azure AD
+        if pg_cfg.ssl_mode in ("require", "verify-full"):
+            pool_kwargs["ssl"] = pg_cfg.ssl_mode
+
+        if pg_cfg.use_azure_ad:
+            try:
+                from azure.identity import DefaultAzureCredential
+
+                credential = DefaultAzureCredential()
+                # Azure DB for PostgreSQL expects the token for
+                # scope "https://ossrdbms-aad.database.windows.net/.default"
+                token = credential.get_token(
+                    "https://ossrdbms-aad.database.windows.net/.default"
+                )
+                pool_kwargs["password"] = token.token
+                logger.info(
+                    "Using Azure AD token for PostgreSQL",
+                    extra={"ssl_mode": pg_cfg.ssl_mode},
+                )
+            except Exception as e:
+                logger.error(
+                    "Azure AD token acquisition failed — falling back to DSN password",
+                    extra={"error": str(e)},
+                )
+
+        self._pool = await asyncpg.create_pool(**pool_kwargs)
         logger.info(
             "PostgresClient initialized",
-            extra={"pool_size": settings.postgres.pool_size},
+            extra={
+                "pool_size": pg_cfg.pool_size,
+                "ssl_mode": pg_cfg.ssl_mode,
+                "azure_ad": pg_cfg.use_azure_ad,
+            },
         )
 
     @asynccontextmanager
@@ -370,7 +408,7 @@ class PostgresClient:
                     """
                     SELECT * FROM agent_registry
                     WHERE status = 'ACTIVE'
-                      AND capabilities @> $1
+                      AND capabilities::jsonb @> $1::jsonb
                       AND last_heartbeat > NOW() - INTERVAL '2 minutes'
                     """,
                     json.dumps([capability]),

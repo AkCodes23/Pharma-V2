@@ -5,10 +5,11 @@ Provides pure-function API clients for patent data retrieval.
 These tools use ONLY deterministic HTTP calls — no LLM inference.
 Every response is hashed for citation integrity.
 
-Data sources:
-  - USPTO Orange Book (FDA approved drugs with patent/exclusivity)
-  - Indian Patent Office (IPO) — patent search
-  - OpenFDA Drug Labels API — supplementary label data
+Architecture context:
+  - Service: Legal Retriever Agent
+  - Responsibility: Patent and exclusivity data retrieval
+  - Data sources: USPTO Orange Book (openFDA), Indian Patent Office (IPO web scraper)
+  - Failure: Circuit breaker per API; mock fallback for IPO if scraping blocked
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from src.shared.models.schemas import Citation
 logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = 30.0
+_IPO_TIMEOUT = 45.0  # IPO scraping needs more time
 
 
 def _hash_response(data: str | bytes) -> str:
@@ -163,7 +165,7 @@ def search_patent_exclusivity(
     return exclusivities, citation
 
 
-# ── Indian Patent Office (Mock — real API requires scraping) ─
+# ── Indian Patent Office (Web Scraper) ──────────────────────
 
 
 def search_ipo_patents(
@@ -173,9 +175,11 @@ def search_ipo_patents(
     """
     Search Indian Patent Office for patent status.
 
-    NOTE: The IPO does not have a public REST API as of 2026.
-    This uses a mock response structure. In production, this
-    would be replaced with a scraping service or licensed data feed.
+    Uses web scraping of the IPO patent search portal since no public
+    REST API exists. Results are parsed from HTML tables.
+
+    Falls back to a structured estimation if scraping is blocked (rate
+    limits, CAPTCHA, or site unavailability).
 
     Args:
         ingredient: Active ingredient name.
@@ -184,32 +188,152 @@ def search_ipo_patents(
     Returns:
         Tuple of (patent_records, citation).
     """
-    # Mock response for MVP — replace with real integration
-    mock_data = [
-        {
-            "patent_number": f"IN-{hash(ingredient) % 100000:06d}",
-            "ingredient": ingredient,
-            "patent_holder": "Original Manufacturer",
-            "filing_date": "2008-03-15",
-            "expiry_date": "2028-03-15",
-            "status": "Active",
-            "patent_type": "Compound Patent",
-            "market": market,
-        },
-    ]
+    ipo_url = "https://ipindiaservices.gov.in/PatentSearch/PatentSearch/ViewApplicationStatus"
+    search_url = "https://ipindiaservices.gov.in/PatentSearch/PatentSearch/SearchPatent"
 
-    mock_json = json.dumps(mock_data)
+    patents: list[dict[str, Any]] = []
+
+    try:
+        with httpx.Client(timeout=_IPO_TIMEOUT, follow_redirects=True) as client:
+            # Step 1: Get session cookies from the search page
+            session_resp = client.get(
+                "https://ipindiaservices.gov.in/PatentSearch/PatentSearch/SearchByKeyword"
+            )
+            session_resp.raise_for_status()
+
+            # Step 2: Submit keyword search form
+            form_data = {
+                "KeyWord": ingredient,
+                "SearchType": "Keyword",
+            }
+            headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": "https://ipindiaservices.gov.in/PatentSearch/",
+            }
+
+            search_resp = client.post(search_url, data=form_data, headers=headers)
+            search_resp.raise_for_status()
+
+            # Step 3: Parse HTML response for patent table rows
+            patents = _parse_ipo_html(search_resp.text, ingredient, market)
+
+        source_url = f"https://ipindiaservices.gov.in/PatentSearch/PatentSearch/SearchByKeyword?q={ingredient}"
+        raw_json = json.dumps(patents, default=str)
+
+        citation = Citation(
+            source_name="Indian Patent Office (IPO)",
+            source_url=source_url,
+            retrieved_at=datetime.now(timezone.utc),
+            data_hash=_hash_response(raw_json),
+            excerpt=f"Found {len(patents)} patent records for {ingredient} in {market}",
+        )
+
+        logger.info(
+            "IPO patent search completed via web scraper",
+            extra={"ingredient": ingredient, "market": market, "result_count": len(patents)},
+        )
+
+        return patents, citation
+
+    except (httpx.HTTPError, httpx.TimeoutException, Exception) as e:
+        logger.warning(
+            "IPO scraper failed — returning estimation fallback",
+            extra={"ingredient": ingredient, "error": str(e), "error_type": type(e).__name__},
+        )
+        return _ipo_estimation_fallback(ingredient, market)
+
+
+def _parse_ipo_html(
+    html: str,
+    ingredient: str,
+    market: str,
+) -> list[dict[str, Any]]:
+    """
+    Parse IPO search results HTML into structured patent records.
+
+    Uses selectolax for fast HTML parsing. Extracts data from the
+    result table rows on the IPO search results page.
+    """
+    try:
+        from selectolax.parser import HTMLParser
+    except ImportError:
+        logger.warning("selectolax not installed — cannot parse IPO HTML")
+        return []
+
+    tree = HTMLParser(html)
+    patents: list[dict[str, Any]] = []
+
+    # IPO search results are typically in table rows
+    table = tree.css_first("table.table, table#searchResults, table.grid-table")
+    if table is None:
+        # Try finding any table with patent-like content
+        tables = tree.css("table")
+        for t in tables:
+            if "application" in (t.text() or "").lower():
+                table = t
+                break
+
+    if table is None:
+        logger.info("No patent results table found in IPO HTML response")
+        return patents
+
+    rows = table.css("tr")
+    for row in rows[1:]:  # Skip header row
+        cells = row.css("td")
+        if len(cells) < 3:
+            continue
+
+        cell_texts = [c.text(strip=True) for c in cells]
+
+        patent = {
+            "application_number": cell_texts[0] if len(cell_texts) > 0 else "",
+            "title": cell_texts[1] if len(cell_texts) > 1 else "",
+            "applicant": cell_texts[2] if len(cell_texts) > 2 else "",
+            "filing_date": cell_texts[3] if len(cell_texts) > 3 else "",
+            "status": cell_texts[4] if len(cell_texts) > 4 else "Unknown",
+            "ingredient": ingredient,
+            "market": market,
+            "data_source": "ipo_scraper",
+        }
+        patents.append(patent)
+
+    return patents
+
+
+def _ipo_estimation_fallback(
+    ingredient: str,
+    market: str,
+) -> tuple[list[dict[str, Any]], Citation]:
+    """
+    Fallback when IPO scraping fails.
+
+    Returns a structured record indicating that IPO data could not be
+    retrieved live, with a recommendation to check manually. This is
+    NOT mock data — it's an explicit data-unavailable signal.
+    """
+    fallback_record = {
+        "ingredient": ingredient,
+        "market": market,
+        "status": "DATA_UNAVAILABLE",
+        "data_source": "ipo_fallback",
+        "note": (
+            "IPO patent search portal was unavailable. "
+            "Manual verification recommended at https://ipindiaservices.gov.in/PatentSearch/"
+        ),
+    }
+
+    raw_json = json.dumps(fallback_record)
     citation = Citation(
-        source_name="Indian Patent Office (IPO)",
-        source_url=f"https://ipindia.gov.in/patents/search?q={ingredient}",
+        source_name="Indian Patent Office (IPO) — Fallback",
+        source_url=f"https://ipindiaservices.gov.in/PatentSearch/?q={ingredient}",
         retrieved_at=datetime.now(timezone.utc),
-        data_hash=_hash_response(mock_json),
-        excerpt=f"[MOCK] Found {len(mock_data)} patents for {ingredient} in {market}",
+        data_hash=_hash_response(raw_json),
+        excerpt=f"IPO data unavailable for {ingredient} in {market} — manual check recommended",
     )
 
     logger.info(
-        "IPO patent search completed (mock)",
+        "IPO fallback record generated",
         extra={"ingredient": ingredient, "market": market},
     )
 
-    return mock_data, citation
+    return [fallback_record], citation

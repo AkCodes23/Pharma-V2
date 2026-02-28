@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supervisor
+  namespace: pharma-ai
+  labels:
+    app: supervisor
+    tier: orchestration
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: supervisor
+  template:
+    metadata:
+      labels:
+        app: supervisor
+        tier: orchestration
+    spec:
+      containers:
+        - name: supervisor
+          image: pharma-ai/supervisor:latest
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: supervisor-service
+  namespace: pharma-ai
+spec:
+  selector:
+    app: supervisor
+  ports:
+    - port: 8001
+      targetPort: 8001

@@ -17,6 +17,7 @@ class PillarType(StrEnum):
     COMMERCIAL = "COMMERCIAL"
     SOCIAL = "SOCIAL"
     KNOWLEDGE = "KNOWLEDGE"
+    NEWS = "NEWS"
 
 
 class AgentType(StrEnum):
@@ -30,6 +31,9 @@ class AgentType(StrEnum):
     KNOWLEDGE_RETRIEVER = "KNOWLEDGE_RETRIEVER"
     SUPERVISOR = "SUPERVISOR"
     EXECUTOR = "EXECUTOR"
+    QUALITY_EVALUATOR = "QUALITY_EVALUATOR"
+    PROMPT_ENHANCER = "PROMPT_ENHANCER"
+    NEWS_RETRIEVER = "NEWS_RETRIEVER"
 
 
 class SessionStatus(StrEnum):

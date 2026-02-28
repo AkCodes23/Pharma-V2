@@ -1,62 +1,51 @@
-# ============================================================
-# Pharma Agentic AI — Unified Dockerfile (Multi-Stage)
-# ============================================================
-# Builds: planner, supervisor, executor, retrievers, celery-worker
-# Usage:  docker compose build
-# ============================================================
+# Pharma Agentic AI — Multi-stage Dockerfile
+# Builds all Python services (Planner, Supervisor, Executor, Retriever Worker)
+# Single Dockerfile with build target selection.
 
-FROM python:3.12-slim AS builder
+# ── Base stage ────────────────────────────────────────────
+FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install system deps for WeasyPrint (PDF) and psycopg2
+# OS-level dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    libffi-dev \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libcairo2 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY pyproject.toml .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir ".[dev]"
-
-# ── Runtime Stage ──────────────────────────────────────────
-FROM python:3.12-slim
-
-# Install runtime deps (WeasyPrint needs these at runtime too)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libcairo2 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m appuser
-
-WORKDIR /app
-
-# Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Install Python dependencies
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir ".[all]"
 
 # Copy application code
 COPY src/ ./src/
-COPY pyproject.toml .
 
-# Ensure src is importable
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-
+# Non-root user for security
+RUN useradd --create-home appuser
 USER appuser
 
-# Default: planner agent (overridden in docker-compose.yml per service)
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
+
+# ── Planner Agent ─────────────────────────────────────────
+FROM base AS planner
+ENV PORT=8000
 EXPOSE 8000
 CMD ["uvicorn", "src.agents.planner.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ── Supervisor Agent ──────────────────────────────────────
+FROM base AS supervisor
+ENV PORT=8001
+EXPOSE 8001
+CMD ["uvicorn", "src.agents.supervisor.main:app", "--host", "0.0.0.0", "--port", "8001"]
+
+# ── Executor Agent ────────────────────────────────────────
+FROM base AS executor
+ENV PORT=8002
+EXPOSE 8002
+CMD ["uvicorn", "src.agents.executor.main:app", "--host", "0.0.0.0", "--port", "8002"]
+
+# ── Retriever Worker ──────────────────────────────────────
+FROM base AS retriever-worker
+CMD ["python", "-m", "src.agents.retrievers.worker"]

@@ -44,6 +44,12 @@ class ReflectionEngine:
     def __init__(self) -> None:
         self._postgres = None
         self._redis = None
+        self._default_thresholds = {
+            "grounding": 0.8,
+            "quality": 0.6,
+            "citation": 0.8,
+            "coverage": 1.0,
+        }
 
     async def initialize(self) -> None:
         """Initialize database backends."""
@@ -55,12 +61,44 @@ class ReflectionEngine:
         self._redis = RedisClient()
         logger.info("ReflectionEngine initialized")
 
+    async def load_dynamic_thresholds(
+        self,
+        user_id: str | None = None,
+    ) -> dict[str, float]:
+        """
+        Load user-specific or system-default SPAR thresholds.
+
+        Users can customize thresholds via the preferences API.
+        Example overrides stored in long-term memory:
+          {"grounding": 0.7, "COMMERCIAL": 0.5}
+
+        Falls back to system defaults on failure.
+        """
+        thresholds = self._default_thresholds.copy()
+
+        if user_id and self._redis:
+            try:
+                from src.shared.memory.long_term import LongTermMemory
+                memory = LongTermMemory()
+                user_prefs = await memory.get_user_memories(user_id, category="thresholds")
+                if user_prefs:
+                    # Merge user overrides onto defaults
+                    for pref in user_prefs:
+                        content = pref.get("content", {})
+                        if isinstance(content, dict):
+                            thresholds.update(content)
+            except Exception:
+                logger.debug("Could not load user thresholds, using defaults")
+
+        return thresholds
+
     async def reflect_on_session(
         self,
         session_id: str,
         session_data: dict[str, Any],
         agent_results: list[dict[str, Any]],
         validation_result: dict[str, Any] | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Run all reflection checks on a completed session.
@@ -70,11 +108,15 @@ class ReflectionEngine:
             session_data: Full session document.
             agent_results: List of agent result dicts.
             validation_result: Supervisor validation outcome.
+            user_id: Optional user ID for dynamic thresholds.
 
         Returns:
             Consolidated reflection report.
         """
         reflections: list[dict[str, Any]] = []
+
+        # Load dynamic thresholds (user-specific or defaults)
+        thresholds = await self.load_dynamic_thresholds(user_id)
 
         # 1. Citation validity check
         citation_result = self._check_citation_validity(agent_results)
@@ -205,7 +247,7 @@ class ReflectionEngine:
         self, session_data: dict[str, Any], agent_results: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Check if all expected pillars contributed results."""
-        expected_pillars = {"LEGAL", "CLINICAL", "COMMERCIAL", "SOCIAL", "KNOWLEDGE"}
+        expected_pillars = {"LEGAL", "CLINICAL", "COMMERCIAL", "SOCIAL", "KNOWLEDGE", "NEWS"}
         completed_pillars = {r.get("pillar", "").upper() for r in agent_results}
         missing_pillars = expected_pillars - completed_pillars
         coverage_score = len(completed_pillars) / len(expected_pillars) if expected_pillars else 1.0

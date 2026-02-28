@@ -28,6 +28,8 @@ x-python-service: &python-service
       condition: service_healthy
     kafka:
       condition: service_healthy
+  environment:
+    - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
   networks:
     - pharma-net
 
@@ -143,6 +145,7 @@ services:
       kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.commercial
       kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.social
       kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.knowledge
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.news
       kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.events.sessions
       kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.events.audit
       kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.events.analytics
@@ -167,6 +170,66 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+    networks:
+      - pharma-net
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: pharma-jaeger
+    ports:
+      - "16686:16686"    # Jaeger UI
+      - "4317:4317"      # OTLP gRPC receiver
+      - "4318:4318"      # OTLP HTTP receiver
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pharma-net
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: pharma-neo4j
+    ports:
+      - "7474:7474"    # Neo4j Browser
+      - "7687:7687"    # Bolt protocol
+    environment:
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-pharma_neo4j_2026}"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_server_memory_heap_max__size: "512m"
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - pharma-net
+
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: pharma-postgres-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: pharma_ai
+      POSTGRES_USER: pharma
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pharma_pg_2026}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 0
+      HEALTHCHECK_PORT: 8088
+    volumes:
+      - pg-backups:/backups
     networks:
       - pharma-net
 
@@ -264,6 +327,32 @@ services:
       - SERVICE_NAME=retriever-knowledge
       - AGENT_MODULE=knowledge
 
+  retriever-news:
+    <<: *python-service
+    container_name: pharma-retriever-news
+    command: python -m src.agents.retrievers.news.main
+    environment:
+      - SERVICE_NAME=retriever-news
+      - AGENT_MODULE=news
+
+  pharma-mcp:
+    <<: *python-service
+    container_name: pharma-mcp
+    # Streamable HTTP transport on port 8010
+    command: python src/mcp/mcp_server.py http
+    ports:
+      - "8010:8010"
+    environment:
+      - SERVICE_NAME=pharma-mcp
+      - PLANNER_URL=http://planner:8000
+      - PHARMA_INTERNAL_API_KEY=${PHARMA_INTERNAL_API_KEY:-dev-internal-key}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8010/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   # ── Background Workers ───────────────────────────────────
 
   celery-worker:
@@ -335,6 +424,10 @@ volumes:
   zookeeper-data:
     driver: local
   kafka-data:
+    driver: local
+  pg-backups:
+    driver: local
+  neo4j-data:
     driver: local
 
 networks:

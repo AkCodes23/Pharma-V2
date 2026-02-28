@@ -1,0 +1,129 @@
+# ============================================================
+# Pharma Agentic AI — KEDA ScaledObjects
+# ============================================================
+# Event-driven autoscaling for retriever agents.
+#
+# Supports two trigger modes (selected via env):
+#   - Kafka: Direct Kafka topic lag (local dev)
+#   - Azure Event Hubs: Event Hubs consumer group lag (production)
+#
+# Toggle: Set KAFKA_USE_EVENT_HUBS=true and provide
+# KAFKA_EVENT_HUBS_CONNECTION_STRING in the deployment config.
+# ============================================================
+
+# ── Retriever: Legal ────────────────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retriever-legal-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: retriever-legal
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: azure-eventhub
+      metadata:
+        connectionFromEnv: KAFKA_EVENT_HUBS_CONNECTION_STRING
+        consumerGroup: retriever-legal-group
+        eventHubNamespace: pharma-events
+        eventHubName: pharma.tasks.legal
+        unprocessedEventThreshold: "5"
+        blobContainer: keda-checkpoints
+      authenticationRef:
+        name: keda-eventhub-auth
+---
+
+# ── Retriever: Clinical ─────────────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retriever-clinical-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: retriever-clinical
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: azure-eventhub
+      metadata:
+        connectionFromEnv: KAFKA_EVENT_HUBS_CONNECTION_STRING
+        consumerGroup: retriever-clinical-group
+        eventHubNamespace: pharma-events
+        eventHubName: pharma.tasks.clinical
+        unprocessedEventThreshold: "5"
+        blobContainer: keda-checkpoints
+      authenticationRef:
+        name: keda-eventhub-auth
+---
+
+# ── Retriever: News ──────────────────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retriever-news-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: retriever-news
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: azure-eventhub
+      metadata:
+        connectionFromEnv: KAFKA_EVENT_HUBS_CONNECTION_STRING
+        consumerGroup: retriever-news-group
+        eventHubNamespace: pharma-events
+        eventHubName: pharma.tasks.news
+        unprocessedEventThreshold: "3"
+        blobContainer: keda-checkpoints
+      authenticationRef:
+        name: keda-eventhub-auth
+---
+
+# ── Celery Workers ───────────────────────────────────────────
+# Celery workers scale on Azure Service Bus queue length
+# (if Celery broker is swapped to SB) or Redis list length.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: celery-worker-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: celery-worker
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  pollingInterval: 30
+  triggers:
+    - type: azure-servicebus
+      metadata:
+        queueName: pharma.pdf
+        messageCount: "3"
+        connectionFromEnv: SERVICE_BUS_CONNECTION_STRING
+    - type: azure-servicebus
+      metadata:
+        queueName: pharma.rag
+        messageCount: "3"
+        connectionFromEnv: SERVICE_BUS_CONNECTION_STRING
+---
+
+# ── KEDA TriggerAuthentication ───────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-eventhub-auth
+  namespace: pharma-ai
+spec:
+  secretTargetRef:
+    - parameter: connection
+      name: eventhub-secrets
+      key: connection-string

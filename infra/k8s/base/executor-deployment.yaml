@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  namespace: pharma-ai
+  labels:
+    app: executor
+    tier: orchestration
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: executor
+  template:
+    metadata:
+      labels:
+        app: executor
+        tier: orchestration
+    spec:
+      containers:
+        - name: executor
+          image: pharma-ai/executor:latest
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: executor-service
+  namespace: pharma-ai
+spec:
+  selector:
+    app: executor
+  ports:
+    - port: 8002
+      targetPort: 8002

@@ -1,0 +1,74 @@
+# Pharma Agentic AI — KEDA ScaledObjects
+# Auto-scales retriever workers based on Azure Service Bus queue depth.
+
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retriever-workers-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: retriever-workers
+  pollingInterval: 15
+  cooldownPeriod: 60
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  triggers:
+    # Scale on legal-tasks queue depth
+    - type: azure-servicebus
+      metadata:
+        queueName: legal-tasks
+        namespace: pharma-ai-bus
+        messageCount: "5"
+      authenticationRef:
+        name: servicebus-auth
+
+    # Scale on clinical-tasks queue depth
+    - type: azure-servicebus
+      metadata:
+        queueName: clinical-tasks
+        namespace: pharma-ai-bus
+        messageCount: "5"
+      authenticationRef:
+        name: servicebus-auth
+
+    # Scale on commercial-tasks queue depth
+    - type: azure-servicebus
+      metadata:
+        queueName: commercial-tasks
+        namespace: pharma-ai-bus
+        messageCount: "5"
+      authenticationRef:
+        name: servicebus-auth
+
+    # Scale on social-tasks queue depth
+    - type: azure-servicebus
+      metadata:
+        queueName: social-tasks
+        namespace: pharma-ai-bus
+        messageCount: "5"
+      authenticationRef:
+        name: servicebus-auth
+
+    # Scale on knowledge-tasks queue depth
+    - type: azure-servicebus
+      metadata:
+        queueName: knowledge-tasks
+        namespace: pharma-ai-bus
+        messageCount: "5"
+      authenticationRef:
+        name: servicebus-auth
+
+---
+# ── KEDA Auth for Service Bus ─────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: servicebus-auth
+  namespace: pharma-ai
+spec:
+  secretTargetRef:
+    - parameter: connection
+      name: pharma-ai-secrets
+      key: SERVICE_BUS_CONNECTION_STRING

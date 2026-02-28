@@ -203,6 +203,10 @@ class BaseRetriever(ABC):
             cooldown_seconds=60.0,
             agent_name=self.agent_type.value,
         )
+        # Lazy-loaded RAG retriever (import deferred to avoid startup cost)
+        self._rag_retriever = None
+        # Carries RAG context from _augment_with_rag() to execute_tools()
+        self._rag_context: str = ""
 
     @property
     @abstractmethod
@@ -328,6 +332,9 @@ class BaseRetriever(ABC):
         start_time = time.monotonic()
 
         try:
+            # 1a. RAG augmentation — inject prior knowledge BEFORE tool execution
+            self._rag_context = self._augment_with_rag(task, session_id)
+
             # 2. Execute deterministic tools (with timeout)
             findings, citations = self._execute_with_timeout(task)
             execution_time_ms = int((time.monotonic() - start_time) * 1000)
@@ -439,6 +446,80 @@ class BaseRetriever(ABC):
                     correlation_id=message.correlation_id,
                 )
 
+    def _augment_with_rag(
+        self,
+        task: TaskNode,
+        session_id: str,
+    ) -> str:
+        """
+        Retrieve prior RAG knowledge for this drug+pillar BEFORE tool execution.
+
+        Fail-open: any RAG error returns empty string — agent proceeds normally.
+        Uses a new asyncio event loop to call async RAG from sync context.
+
+        The returned context string is stored in self._rag_context and is
+        available to execute_tools() via self._rag_context.
+
+        Returns:
+            Formatted context string (may be empty if no relevant prior knowledge).
+        """
+        import asyncio as _asyncio
+        from src.shared.config import get_settings
+
+        try:
+            cfg = get_settings().rag
+            if not cfg.enable_rag_augmentation:
+                return ""
+
+            from src.shared.rag.rag_retriever import RagRetriever
+
+            # Extract drug name from task parameters
+            params = getattr(task, "parameters", {}) or {}
+            drug_name = params.get("drug_name", "") or getattr(task, "drug_name", "") or ""
+            query = getattr(task, "description", "") or drug_name
+
+            if not drug_name or len(drug_name) < cfg.min_drug_name_length:
+                return ""
+
+            retriever = RagRetriever()
+            loop = _asyncio.new_event_loop()
+            try:
+                ctx = loop.run_until_complete(
+                    retriever.retrieve(
+                        query=query,
+                        pillar=self.pillar.value,
+                        drug_name=drug_name,
+                        top_k=5,
+                    )
+                )
+            finally:
+                loop.close()
+
+            if ctx.is_empty:
+                logger.debug(
+                    "RAG returned no prior knowledge",
+                    extra={"pillar": self.pillar.value, "drug": drug_name},
+                )
+                return ""
+
+            logger.info(
+                "RAG context injected",
+                extra={
+                    "pillar": self.pillar.value,
+                    "drug": drug_name,
+                    "chunks": ctx.total_retrieved,
+                },
+            )
+            return ctx.formatted_context
+
+        except Exception as e:
+            # Fail-open: RAG augmentation is always best-effort
+            logger.warning(
+                "RAG augmentation failed — proceeding without context",
+                extra={"error": str(e), "pillar": self.pillar.value},
+            )
+            return ""
+
     def start(self) -> None:
         """Start the consumption loop."""
         logger.info("Starting retriever agent", extra={"agent_type": self.agent_type})
@@ -448,3 +529,4 @@ class BaseRetriever(ABC):
         """Stop the consumption loop and cleanup."""
         self._consumer.close()
         logger.info("Retriever agent stopped", extra={"agent_type": self.agent_type})
+

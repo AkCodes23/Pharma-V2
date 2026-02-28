@@ -47,48 +47,45 @@ User Query → Planner Agent → Service Bus → Retriever Swarm (parallel)
 
 ```
 pharma-agentic-ai/
-├── infra/                          # Azure Bicep IaC templates
-│   └── main.bicep                  # Cosmos DB, Service Bus, ACA, Key Vault
+├── infra/
+│   ├── bicep/main.bicep            # 12+ Azure resources (OpenAI, Cosmos, SB, etc.)
+│   ├── k8s/
+│   │   ├── deployment.yaml         # AKS manifests (Planner, Supervisor, Executor, Frontend)
+│   │   ├── keda-scalers.yaml       # Service Bus queue-based auto-scaling (1→10 replicas)
+│   │   └── secrets.template.yaml   # Secrets template (never committed)
+│   └── migrations/
+│       └── 001_initial.py          # PostgreSQL schema (sessions, audit, metrics, DPO)
 ├── src/
 │   ├── agents/
-│   │   ├── planner/                # Intent decomposition → DAG generation
-│   │   │   ├── main.py             # FastAPI entry point
-│   │   │   ├── decomposer.py       # GPT-4o Strict JSON intent parsing
-│   │   │   └── publisher.py        # Session creation + Service Bus routing
+│   │   ├── planner/                # FastAPI :8000 — query decomposition + task publishing
 │   │   ├── retrievers/
 │   │   │   ├── base_retriever.py   # Abstract lifecycle (consume → execute → persist)
-│   │   │   ├── legal/              # USPTO Orange Book + Indian Patent Office
-│   │   │   ├── clinical/           # ClinicalTrials.gov v2 + CDSCO
-│   │   │   ├── commercial/         # Market TAM, revenue, CAGR analysis
-│   │   │   ├── social/             # FDA FAERS adverse events + safety scoring
-│   │   │   └── knowledge/          # Azure AI Search internal RAG
-│   │   ├── supervisor/
-│   │   │   ├── main.py             # Quality gate — validates all results
-│   │   │   └── validator.py        # 3-pass: rule-based → conflict detection → LLM judge
-│   │   └── executor/
-│   │       ├── main.py             # Final synthesis orchestrator
-│   │       ├── report_generator.py # Context-Constrained Decoding (zero hallucination)
-│   │       └── chart_generator.py  # Revenue, patent timeline, safety charts
-│   ├── frontend/                   # Next.js 15 premium dark dashboard
-│   │   └── src/app/
-│   │       ├── page.tsx            # Main dashboard with agent status grid
-│   │       ├── layout.tsx          # Root layout with navigation
-│   │       └── globals.css         # Dark glassmorphism design system
+│   │   │   ├── legal/              # USPTO Orange Book + IPO web scraper + fallback
+│   │   │   ├── clinical/           # ClinicalTrials.gov v2 + FDA approvals + CDSCO scraper
+│   │   │   ├── commercial/         # SEC EDGAR + Yahoo Finance + TAM estimation
+│   │   │   ├── social/             # FDA FAERS + PubMed E-utilities + composite sentiment
+│   │   │   └── knowledge/          # Azure AI Search RAG pipeline (hybrid search)
+│   │   ├── supervisor/             # Grounding Validator (rule + conflict + LLM judge)
+│   │   └── executor/               # Report synthesis + PDF + charts
+│   ├── frontend/                   # Next.js 15 dark dashboard (live API, no mocks)
+│   ├── ml/
+│   │   └── dpo_training.py         # DPO pipeline (data collector + local/Azure trainer)
 │   └── shared/
-│       ├── models/
-│       │   ├── enums.py            # PillarType, AgentType, SessionStatus, etc.
-│       │   └── schemas.py          # Session, TaskNode, AgentResult, Citation, AuditEntry
 │       ├── infra/
-│       │   ├── cosmos_client.py    # Cosmos DB operations + Change Feed
+│       │   ├── cosmos_client.py     # Cosmos DB operations + Change Feed
+│       │   ├── graph_client.py      # Dual-backend: Neo4j (dev) + Cosmos Gremlin (prod)
+│       │   ├── ner_service.py       # Azure AI Language NER + regex fallback
+│       │   ├── websocket.py         # Local ConnectionManager + Azure Web PubSub
 │       │   ├── servicebus_client.py # Topic-based pub/sub with DLQ
-│       │   ├── telemetry.py        # OpenTelemetry + structlog
-│       │   └── audit.py            # 21 CFR Part 11 compliance trail
-│       └── config.py              # Unified Pydantic Settings
+│       │   └── telemetry.py         # OpenTelemetry + structlog + Azure Monitor
+│       └── config.py               # Unified Pydantic Settings (12 service configs)
 ├── tests/
-│   └── test_models.py              # Unit tests for schemas & enums
-├── .github/workflows/ci.yml        # CI pipeline
-├── pyproject.toml                  # Python dependencies
-└── .env.example                    # Environment template
+│   ├── unit/                        # 12 test files, ~80+ test cases
+│   ├── test_integration.py          # Cross-service integration tests
+│   └── test_e2e_keytruda.py         # End-to-end scenario test
+├── .github/workflows/ci-cd.yaml     # 8-job CI/CD (lint, test, security, build, deploy)
+├── Dockerfile                       # Multi-stage (planner | supervisor | executor | worker)
+└── pyproject.toml
 ```
 
 ---
@@ -181,14 +178,20 @@ pytest tests/ -v --cov=src
 | Layer | Technology |
 |-------|-----------|
 | Orchestration | Microsoft Semantic Kernel |
-| Compute | Azure Container Apps + KEDA |
+| Compute | AKS (Kubernetes) + KEDA auto-scaling |
 | LLM | Azure OpenAI GPT-4o |
-| State | Azure Cosmos DB (Serverless) |
-| Messaging | Azure Service Bus |
+| State | Azure Cosmos DB (NoSQL + Gremlin) |
+| Messaging | Azure Service Bus (6 topics) |
+| Graph | Neo4j (dev) / Cosmos Gremlin (prod) |
+| NER | Azure AI Language + regex fallback |
+| Real-time | Azure Web PubSub + local WebSocket |
+| RAG | Azure AI Search (hybrid + semantic) |
 | Frontend | Next.js 15, React 19, TypeScript |
+| ML | DPO training (TRL local / Azure fine-tune) |
 | Observability | OpenTelemetry → Azure Monitor |
-| IaC | Azure Bicep |
-| CI/CD | GitHub Actions |
+| IaC | Azure Bicep (12+ resources) |
+| CI/CD | GitHub Actions (8-job pipeline) |
+| Security | Bandit + Safety scan, secrets in Key Vault |
 
 ---
 

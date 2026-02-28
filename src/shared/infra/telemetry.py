@@ -151,6 +151,11 @@ def setup_telemetry(service_name: str) -> trace.Tracer:
     """
     Initialize OpenTelemetry tracing, metrics, and structured logging.
 
+    Supports two modes:
+      - Azure Monitor (production): `azure-monitor-opentelemetry` SDK
+        with Application Insights connection string
+      - Generic OTLP (local dev): OTLP exporter → Jaeger/Grafana
+
     Args:
         service_name: The name of the agent/service (e.g., 'planner-agent').
 
@@ -158,45 +163,41 @@ def setup_telemetry(service_name: str) -> trace.Tracer:
         A Tracer instance for creating spans.
     """
     settings = get_settings()
+    telemetry_cfg = settings.telemetry
 
-    # ── Resource identification ────────────────────────────
-    resource = Resource.create({
-        "service.name": service_name,
-        "service.version": "0.1.0",
-        "deployment.environment": settings.app.env,
-    })
+    # ── Azure Monitor (production) ────────────────────────
+    if telemetry_cfg.use_azure_monitor and telemetry_cfg.application_insights_connection_string:
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor
 
-    # ── Trace Provider ─────────────────────────────────────
-    provider = TracerProvider(resource=resource)
-
-    if settings.app.env == "production":
-        otlp_exporter = OTLPSpanExporter()
-        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+            configure_azure_monitor(
+                connection_string=telemetry_cfg.application_insights_connection_string,
+                service_name=service_name,
+                service_version="0.1.0",
+                # Sampling: 1.0 = 100%, 0.1 = 10%
+                sampling_ratio=telemetry_cfg.sampling_ratio,
+                # Automatic instrumentation of httpx, fastapi, redis, asyncpg
+                enable_live_metrics=True,
+            )
+            logger.info(
+                "Azure Monitor OpenTelemetry configured",
+                extra={"service": service_name, "sampling": telemetry_cfg.sampling_ratio},
+            )
+        except ImportError:
+            logger.warning(
+                "azure-monitor-opentelemetry not installed — falling back to generic OTLP"
+            )
+            _setup_generic_otlp(service_name, settings)
+        except Exception as e:
+            logger.error(
+                "Azure Monitor setup failed — falling back to generic OTLP",
+                extra={"error": str(e)},
+            )
+            _setup_generic_otlp(service_name, settings)
     else:
-        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        _setup_generic_otlp(service_name, settings)
 
-    trace.set_tracer_provider(provider)
-
-    # ── Metrics Provider ───────────────────────────────────
-    if settings.app.env == "production":
-        # In production, use OTLP exporter for metrics too
-        metric_reader = PeriodicExportingMetricReader(
-            ConsoleMetricExporter(),  # Replace with OTLPMetricExporter in prod
-            export_interval_millis=30_000,
-        )
-    else:
-        metric_reader = PeriodicExportingMetricReader(
-            ConsoleMetricExporter(),
-            export_interval_millis=60_000,
-        )
-
-    meter_provider = MeterProvider(
-        resource=resource,
-        metric_readers=[metric_reader],
-    )
-    metrics.set_meter_provider(meter_provider)
-
-    # ── Structured Logging (JSON) ──────────────────────────
+    # ── Structured Logging (shared across both modes) ─────
     log_level = getattr(logging, settings.app.log_level.upper(), logging.INFO)
 
     structlog.configure(
@@ -223,6 +224,40 @@ def setup_telemetry(service_name: str) -> trace.Tracer:
     )
 
     return trace.get_tracer(service_name)
+
+
+def _setup_generic_otlp(service_name: str, settings) -> None:
+    """
+    Configure generic OTLP tracing and metrics (Jaeger, Grafana, etc.).
+
+    Used in local dev or as fallback when Azure Monitor is unavailable.
+    """
+    resource = Resource.create({
+        "service.name": service_name,
+        "service.version": "0.1.0",
+        "deployment.environment": settings.app.env,
+    })
+
+    # Trace provider
+    provider = TracerProvider(resource=resource)
+    if settings.app.env == "production":
+        otlp_exporter = OTLPSpanExporter()
+        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    else:
+        import os
+        otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+        otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+
+    trace.set_tracer_provider(provider)
+
+    # Metrics provider
+    metric_reader = PeriodicExportingMetricReader(
+        ConsoleMetricExporter(),
+        export_interval_millis=30_000 if settings.app.env == "production" else 60_000,
+    )
+    meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+    metrics.set_meter_provider(meter_provider)
 
 
 def instrument_fastapi(app: Any) -> None:

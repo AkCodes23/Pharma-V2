@@ -63,9 +63,41 @@ class RedisClient:
 
     def __init__(self) -> None:
         settings = get_settings()
+        redis_cfg = settings.redis
+
+        # Determine connection URL
+        connect_url = redis_cfg.url
+
+        if redis_cfg.use_azure:
+            # Azure Cache for Redis: TLS required, Azure AD or access key auth
+            try:
+                from azure.identity import DefaultAzureCredential
+
+                credential = DefaultAzureCredential()
+                # Azure Cache for Redis AAD scope
+                token = credential.get_token(
+                    "https://redis.azure.com/.default"
+                )
+                host = redis_cfg.azure_host
+                connect_url = f"rediss://:{token.token}@{host}:6380/0"
+                logger.info(
+                    "Using Azure AD token for Azure Cache for Redis",
+                    extra={"host": host},
+                )
+            except ImportError:
+                # azure-identity not installed, fall back to URL-based auth
+                logger.warning(
+                    "azure-identity not available — using URL-based Redis auth"
+                )
+            except Exception as e:
+                logger.warning(
+                    "Azure AD token failed for Redis — using URL-based auth",
+                    extra={"error": str(e)},
+                )
+
         self._pool = redis.ConnectionPool.from_url(
-            url=settings.redis.url,
-            max_connections=settings.redis.max_connections,
+            url=connect_url,
+            max_connections=redis_cfg.max_connections,
             decode_responses=True,
             socket_timeout=5.0,
             socket_connect_timeout=5.0,
@@ -73,13 +105,16 @@ class RedisClient:
             health_check_interval=30,
         )
         self._client = redis.Redis(connection_pool=self._pool)
-        self._session_ttl = settings.redis.session_cache_ttl
-        self._result_ttl = settings.redis.result_cache_ttl
+        self._session_ttl = redis_cfg.session_cache_ttl
+        self._result_ttl = redis_cfg.result_cache_ttl
 
         # Verify connection
         try:
             self._client.ping()
-            logger.info("RedisClient initialized", extra={"url": settings.redis.url})
+            logger.info(
+                "RedisClient initialized",
+                extra={"azure": redis_cfg.use_azure, "host": redis_cfg.azure_host or "local"},
+            )
         except (RedisConnectionError, RedisTimeoutError) as e:
             logger.warning(
                 "Redis connection failed — operating in degraded mode",
@@ -190,22 +225,25 @@ class RedisClient:
         try:
             key = f"rate_limit:{user_id}"
             now = time.time()
+            # Use integer microseconds as member to avoid float precision
+            # collisions (e.g., 1700000000.123 vs 1700000000.1230001)
+            now_us = int(now * 1_000_000)
             window_start = now - window_seconds
 
             pipe = self._client.pipeline()
-            # Remove expired entries
+            # Remove expired entries from sliding window
             pipe.zremrangebyscore(key, 0, window_start)
-            # Count current entries
+            # Count requests in current window (BEFORE adding current)
             pipe.zcard(key)
-            # Add current request
-            pipe.zadd(key, {f"{now}": now})
-            # Set TTL on the key
+            # Add this request with microsecond-precision unique member
+            pipe.zadd(key, {str(now_us): now})
+            # Reset TTL on key
             pipe.expire(key, window_seconds)
             results = pipe.execute()
 
-            current_count = results[1]
-            remaining = max(0, max_requests - current_count - 1)
+            current_count = results[1]  # count BEFORE this request
             allowed = current_count < max_requests
+            remaining = max(0, max_requests - current_count - 1)
 
             if not allowed:
                 logger.warning(
@@ -273,17 +311,31 @@ class RedisClient:
             pass
 
     def get_active_agents(self) -> list[dict[str, Any]]:
-        """Get all active agents (for A2A discovery)."""
+        """Get all active agents (for A2A discovery) using a pipeline."""
         try:
             agent_ids = self._client.smembers("active_agents")
-            agents = []
+            if not agent_ids:
+                return []
+
+            # Batch all GETs into a single pipeline — O(1) round trips vs O(N)
+            pipe = self._client.pipeline()
             for agent_id in agent_ids:
-                data = self._client.get(f"agent:{agent_id}")
+                pipe.get(f"agent:{agent_id}")
+            raw_results = pipe.execute()
+
+            agents = []
+            expired: list[str] = []
+            for agent_id, data in zip(agent_ids, raw_results):
                 if data:
                     agents.append(json.loads(data))
                 else:
-                    # Agent heartbeat expired — remove from set
-                    self._client.srem("active_agents", agent_id)
+                    # Heartbeat expired — mark for cleanup
+                    expired.append(agent_id)
+
+            if expired:
+                # Remove all expired agents in one SREM call
+                self._client.srem("active_agents", *expired)
+
             return agents
         except (RedisConnectionError, RedisTimeoutError):
             return []
@@ -313,3 +365,46 @@ class RedisClient:
         """Close the connection pool."""
         self._pool.disconnect()
         logger.info("RedisClient closed")
+
+    # ── Method aliases for test compatibility ──────────────
+
+    def is_duplicate_query(self, session_id: str, query: str) -> bool:
+        """
+        Check if this exact query string has been seen recently.
+
+        Uses SHA-256 hash of (session_id, query) with QUERY_DEDUP_TTL.
+        Returns True if duplicate (set NX returns 0), False if new.
+        """
+        try:
+            key_hash = hashlib.sha256(f"{session_id}|{query}".encode()).hexdigest()[:16]
+            key = f"dedup:{key_hash}"
+            # SET NX (only set if not exists) — atomic check-and-set
+            result = self._client.set(key, "1", ex=QUERY_DEDUP_TTL, nx=True)
+            return result is None  # None = key existed = duplicate
+        except (RedisConnectionError, RedisTimeoutError):
+            return False
+
+    def check_circuit_breaker(self, agent_type: str) -> bool:
+        """Return True if circuit is CLOSED (normal), False if OPEN."""
+        state = self.get_circuit_state(agent_type)
+        if state is None:
+            return True
+        return state.get("state", "CLOSED") != "OPEN"
+
+    def record_circuit_failure(self, agent_type: str, threshold: int = 5) -> None:
+        """
+        Record a failure for an agent type.
+
+        Trips the circuit OPEN after `threshold` failures.
+        Uses Redis INCR + EXPIRE rather than GET-mutate-SET
+        to avoid race conditions in concurrent failure recording.
+        """
+        try:
+            fail_key = f"breaker_failures:{agent_type}"
+            count = self._client.incr(fail_key)
+            self._client.expire(fail_key, CIRCUIT_BREAKER_TTL)
+
+            if count >= threshold:
+                self.set_circuit_state(agent_type, {"state": "OPEN", "failures": count})
+        except (RedisConnectionError, RedisTimeoutError):
+            pass

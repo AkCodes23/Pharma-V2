@@ -21,7 +21,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Callable
 
-from pydantic import BaseModel
 
 from src.shared.config import get_settings
 
@@ -126,6 +125,7 @@ class ServiceBusBroker(MessageBroker):
     async def subscribe(self, topic: str, group_id: str, handler: Callable[[dict[str, Any]], None]) -> None:
         from src.shared.infra.servicebus_client import ServiceBusConsumer
         from src.shared.models.enums import PillarType
+        from src.shared.models.schemas import ServiceBusMessage
 
         # Map topic name to PillarType
         pillar_map = {
@@ -139,8 +139,13 @@ class ServiceBusBroker(MessageBroker):
         if not pillar:
             raise ValueError(f"Unknown topic for Service Bus mapping: {topic}")
 
+        # ServiceBusConsumer.consume expects Callable[[ServiceBusMessage], None]
+        # but our abstract interface uses Callable[[dict], None]. Bridge the types:
+        def sb_handler(msg: ServiceBusMessage) -> None:
+            handler(msg.model_dump())
+
         consumer = ServiceBusConsumer(pillar=pillar, subscription_name=group_id)
-        consumer.consume(handler=handler)
+        consumer.consume(handler=sb_handler)
 
     async def stop(self) -> None:
         self._publisher.close()

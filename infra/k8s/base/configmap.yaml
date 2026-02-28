@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pharma-config
+  namespace: pharma-ai
+data:
+  APP_ENV: "production"
+  APP_LOG_LEVEL: "INFO"
+  REDIS_URL: "redis://redis-service:6379/0"
+  POSTGRES_URL: "postgresql://pharma:$(POSTGRES_PASSWORD)@postgres-service:5432/pharma_ai"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger-service:4317"
+  RAG_VECTOR_STORE: "azure_ai_search"

@@ -38,6 +38,9 @@ class A2AMessageType(str, Enum):
     ESCALATE = "escalate"
     HEARTBEAT = "heartbeat"
     ACK = "ack"
+    # Mesh extensions
+    NEGOTIATE = "negotiate"  # Capability contract exchange before delegation
+    INVOKE = "invoke"        # Direct synchronous invocation (bypasses Kafka)
 
 
 class A2AMessage(BaseModel):
@@ -56,6 +59,34 @@ class A2AMessage(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     payload: dict[str, Any] = Field(default_factory=dict)
     ttl_seconds: int = 300  # Message expires after 5 min
+
+
+class NegotiatePayload(BaseModel):
+    """
+    Payload for NEGOTIATE messages.
+
+    Sender requests a capability contract from the target agent.
+    Target responds with its CapabilityContract (as JSON Schema).
+    Allows the Planner to validate inputs BEFORE delegation.
+    """
+    capability_id: str
+    requested_sla_tier: str = "standard"
+    input_preview: dict[str, Any] = Field(default_factory=dict)
+    accept_partial: bool = True
+
+
+class InvokePayload(BaseModel):
+    """
+    Payload for INVOKE messages (direct synchronous execution).
+
+    Used by the AgentMesh for direct HTTP invocation.
+    Unlike DELEGATE (fire-and-forget), INVOKE expects a synchronous
+    response within deadline_ms at the HTTP level.
+    """
+    capability_id: str
+    input_data: dict[str, Any] = Field(default_factory=dict)
+    deadline_ms: int = 30_000
+    sender_endpoint: str = ""  # For callback if HTTP invoke times out
 
 
 class DelegatePayload(BaseModel):

@@ -28,7 +28,10 @@ from pydantic import BaseModel, Field
 from src.agents.planner.decomposer import IntentDecomposer
 from src.agents.planner.publisher import TaskPublisher
 from src.shared.infra.audit import AuditService
+from src.shared.infra.cache_middleware import get_session_cache
 from src.shared.infra.cosmos_client import CosmosDBClient
+from src.shared.infra.rate_limit import rate_limiter
+from src.shared.infra.redis_client import RedisClient
 from src.shared.infra.servicebus_client import ServiceBusPublisher
 from src.shared.infra.telemetry import instrument_fastapi, setup_telemetry
 from src.shared.infra.websocket import websocket_endpoint
@@ -40,12 +43,13 @@ logger = logging.getLogger(__name__)
 _cosmos: CosmosDBClient | None = None
 _publisher: TaskPublisher | None = None
 _decomposer: IntentDecomposer | None = None
+_redis: RedisClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle: initialize and cleanup resources."""
-    global _cosmos, _publisher, _decomposer
+    global _cosmos, _publisher, _decomposer, _redis
 
     # Setup telemetry
     setup_telemetry("planner-agent")
@@ -53,6 +57,7 @@ async def lifespan(app: FastAPI):
     # Initialize infrastructure
     _cosmos = CosmosDBClient()
     _cosmos.ensure_containers()
+    _redis = RedisClient()
     servicebus = ServiceBusPublisher()
     audit = AuditService(_cosmos)
     _publisher = TaskPublisher(_cosmos, servicebus, audit)
@@ -64,6 +69,7 @@ async def lifespan(app: FastAPI):
     # Cleanup
     _decomposer.close()
     servicebus.close()
+    _redis.close()
     logger.info("Planner Agent stopped")
 
 
@@ -135,7 +141,7 @@ class SessionStatusResponse(BaseModel):
 # ── Endpoints ──────────────────────────────────────────────
 
 
-@app.post("/api/v1/sessions", response_model=CreateSessionResponse, status_code=201)
+@app.post("/api/v1/sessions", response_model=CreateSessionResponse, status_code=201, dependencies=[Depends(rate_limiter)])
 async def create_session(request: CreateSessionRequest, req: Request) -> CreateSessionResponse:
     """
     Create a new query session.

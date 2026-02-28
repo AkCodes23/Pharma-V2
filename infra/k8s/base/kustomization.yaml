@@ -1,0 +1,21 @@
+# ============================================================
+# Pharma Agentic AI — Kubernetes Base Manifests (Kustomize)
+# ============================================================
+#
+# Usage:
+#   kubectl apply -k infra/k8s/base/
+#   kubectl delete -k infra/k8s/base/
+#
+# ============================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pharma-ai
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - planner-deployment.yaml
+  - supervisor-deployment.yaml
+  - executor-deployment.yaml

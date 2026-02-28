@@ -23,23 +23,31 @@ Performance optimizations:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import timedelta
 
 from celery import Celery
 from celery.schedules import crontab
 
-from src.shared.config import get_settings
-
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
-
 # ── Celery App Configuration ──────────────────────────────
+# Broker supports two modes:
+#   - Redis (default, local dev): redis://:password@localhost:6379/1
+#   - Azure Service Bus (production): azureservicebus://<connection-string>
+#     Requires: pip install celery[azureservicebus]
+#
+# Broker/backend URLs resolved from environment directly to avoid
+# importing get_settings() at module level — which would crash if
+# .env is not yet loaded when Celery auto-discovers tasks.
+
+_broker_url = os.getenv("CELERY_BROKER_URL", "redis://:pharma_redis_2026@localhost:6379/1")
+_result_backend = os.getenv("CELERY_RESULT_BACKEND", "db+postgresql://pharma:pharma_pg_2026@localhost:5432/celery_results")
 
 app = Celery(
     "pharma_agentic_ai",
-    broker=settings.celery.broker_url,
-    backend=settings.celery.result_backend,
+    broker=_broker_url,
+    backend=_result_backend,
 )
 
 app.conf.update(
@@ -65,6 +73,8 @@ app.conf.update(
     task_routes={
         "src.shared.tasks.pdf_task.*": {"queue": "pharma.pdf"},
         "src.shared.tasks.rag_task.*": {"queue": "pharma.rag"},
+        "src.shared.tasks.celery_ingestion_tasks.*": {"queue": "pharma.rag"},
+        "pharma.rag.*": {"queue": "pharma.rag"},
         "src.shared.tasks.analytics_task.*": {"queue": "pharma.analytics"},
     },
 

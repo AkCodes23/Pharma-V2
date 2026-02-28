@@ -1,0 +1,247 @@
+# Pharma Agentic AI — CI/CD Pipeline
+# GitHub Actions workflow for build, test, security scan, and deploy.
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  packages: write
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  REGISTRY: pharmaai.azurecr.io
+
+jobs:
+  # ── Lint & Type Check ─────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check src/ tests/
+
+      - name: Ruff format check
+        run: ruff format --check src/ tests/
+
+      - name: MyPy type check
+        run: mypy src/ --ignore-missing-imports
+
+  # ── Unit Tests ────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short --cov=src --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: unit
+
+  # ── Integration Tests ─────────────────────────────────
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    services:
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: pharma_test
+        ports: ["5432:5432"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ".[dev]"
+
+      - name: Run integration tests
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          POSTGRES_URL: postgresql://test:test@localhost:5432/pharma_test
+        run: pytest tests/test_integration.py -v --tb=short
+
+  # ── Security Scanning ─────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ".[dev]" safety bandit
+
+      - name: Bandit security scan
+        run: bandit -r src/ -f json -o bandit-report.json || true
+
+      - name: Safety dependency check
+        run: safety check --output json > safety-report.json || true
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+
+  # ── Frontend Build ────────────────────────────────────
+  frontend:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install & build
+        working-directory: src/frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+
+  # ── Docker Build & Push ───────────────────────────────
+  build:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    needs: [test, security, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        target: [planner, supervisor, executor, retriever-worker]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to ACR
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push
+        run: |
+          docker build \
+            --target ${{ matrix.target }} \
+            --tag ${{ env.REGISTRY }}/${{ matrix.target }}:${{ github.sha }} \
+            --tag ${{ env.REGISTRY }}/${{ matrix.target }}:latest \
+            .
+          docker push ${{ env.REGISTRY }}/${{ matrix.target }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ matrix.target }}:latest
+
+  # ── Build Frontend Image ──────────────────────────────
+  build-frontend:
+    name: Build Frontend Image
+    runs-on: ubuntu-latest
+    needs: [frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to ACR
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push
+        working-directory: src/frontend
+        run: |
+          docker build \
+            --tag ${{ env.REGISTRY }}/frontend:${{ github.sha }} \
+            --tag ${{ env.REGISTRY }}/frontend:latest \
+            .
+          docker push ${{ env.REGISTRY }}/frontend:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/frontend:latest
+
+  # ── Deploy to AKS ────────────────────────────────────
+  deploy:
+    name: Deploy to AKS
+    runs-on: ubuntu-latest
+    needs: [build, build-frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: pharma-ai-prod-rg
+          cluster-name: pharma-ai-aks
+
+      - name: Update image tags
+        run: |
+          kubectl set image deployment/planner-agent planner=${{ env.REGISTRY }}/planner:${{ github.sha }} -n pharma-ai
+          kubectl set image deployment/supervisor-agent supervisor=${{ env.REGISTRY }}/supervisor:${{ github.sha }} -n pharma-ai
+          kubectl set image deployment/executor-agent executor=${{ env.REGISTRY }}/executor:${{ github.sha }} -n pharma-ai
+          kubectl set image deployment/retriever-workers worker=${{ env.REGISTRY }}/retriever-worker:${{ github.sha }} -n pharma-ai
+          kubectl set image deployment/frontend frontend=${{ env.REGISTRY }}/frontend:${{ github.sha }} -n pharma-ai
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/planner-agent -n pharma-ai --timeout=300s
+          kubectl rollout status deployment/supervisor-agent -n pharma-ai --timeout=300s
+          kubectl rollout status deployment/executor-agent -n pharma-ai --timeout=300s
+          kubectl rollout status deployment/frontend -n pharma-ai --timeout=300s
