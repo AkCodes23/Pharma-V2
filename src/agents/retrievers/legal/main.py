@@ -1,20 +1,14 @@
 """
-Pharma Agentic AI — Legal Retriever Agent.
+Pharma Agentic AI - Legal Retriever Agent.
 
 Specialized retriever for the LEGAL pillar. Searches patent
 databases (USPTO Orange Book, Indian Patent Office) to determine
 patent expiry dates, blocking patents, and legal runway.
-
-Architecture context:
-  - Service: Legal Retriever (Azure Container App, KEDA-scaled)
-  - Responsibility: Patent and exclusivity data retrieval
-  - Data sources: FDA Orange Book (openFDA), Indian Patent Office
-  - Data ownership: Patent status, expiry dates, exclusivity periods
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
@@ -26,9 +20,21 @@ from src.agents.retrievers.legal.tools import (
     search_patent_exclusivity,
 )
 
+if TYPE_CHECKING:
+    from src.shared.infra.audit import AuditService
+    from src.shared.infra.cosmos_client import CosmosDBClient
+
 
 class LegalRetriever(BaseRetriever):
-    """Legal pillar retriever — patent and exclusivity analysis."""
+    """Legal pillar retriever - patent and exclusivity analysis."""
+
+    def __init__(
+        self,
+        cosmos: CosmosDBClient,
+        audit: AuditService,
+        subscription_name: str = "retriever-legal-sub",
+    ) -> None:
+        super().__init__(cosmos=cosmos, audit=audit, subscription_name=subscription_name)
 
     @property
     def agent_type(self) -> AgentType:

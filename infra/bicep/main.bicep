@@ -226,6 +226,43 @@ resource newsSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-0
   properties: { lockDuration: 'PT5M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
 }
 
+// DLQ monitoring subscriptions — one per topic
+resource legalDlqSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: topics[0]
+  name: 'retriever-legal-dlq-sub'
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+}
+
+resource clinicalDlqSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: topics[1]
+  name: 'retriever-clinical-dlq-sub'
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+}
+
+resource commercialDlqSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: topics[2]
+  name: 'retriever-commercial-dlq-sub'
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+}
+
+resource socialDlqSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: topics[3]
+  name: 'retriever-social-dlq-sub'
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+}
+
+resource knowledgeDlqSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: topics[4]
+  name: 'retriever-knowledge-dlq-sub'
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+}
+
+resource newsDlqSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: topics[5]
+  name: 'retriever-news-dlq-sub'
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+}
+
 // RBAC: Service Bus Data Sender + Receiver for Managed Identity
 resource sbSenderRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(serviceBus.id, managedIdentity.id, 'sb-sender')

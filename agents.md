@@ -1,6 +1,7 @@
 # Pharma Agentic AI — Agent Registry
 
-> Complete reference for every agent in the distributed swarm.
+> **Last Updated**: 2026-03-02  
+> Complete reference for every agent in the distributed swarm.  
 > Each entry defines the agent's role, capabilities, data flow, and failure behavior.
 
 ---
@@ -12,13 +13,13 @@
       ↓
   ┌──────────┐     ┌────────────────────────────────┐
   │ Planner  │────→│  Message Broker (Kafka / SB)    │
-  │ :8000    │     └──────┬──┬──┬──┬──┬──────────────┘
-  └──────────┘            │  │  │  │  │
-      ↕ Redis             ↓  ↓  ↓  ↓  ↓
-  ┌──────────┐     Legal Clin Comm Soc Know
-  │ ShortTerm│     Retr  Retr Retr Retr Retr+RAG
-  │ Memory   │            │  │  │  │  │
-  └──────────┘            ↓  ↓  ↓  ↓  ↓
+  │ :8000    │     └──────┬──┬──┬──┬──┬──┬───────────┘
+  └──────────┘            │  │  │  │  │  │
+      ↕ Redis             ↓  ↓  ↓  ↓  ↓  ↓
+  ┌──────────┐     Legal Clin Comm Soc Know News
+  │ ShortTerm│     Retr  Retr Retr Retr RAG  Retr
+  │ Memory   │            │  │  │  │  │  │
+  └──────────┘            ↓  ↓  ↓  ↓  ↓  ↓
                    ┌─────────────────────────┐
                    │   Quality Evaluator     │ ← LLM scoring
                    └──────┬──────────────────┘
@@ -190,6 +191,32 @@
 
 ---
 
+## 6b. News Retriever Agent
+
+| Property | Value |
+|----------|-------|
+| **Type** | `NEWS_RETRIEVER` |
+| **Pillar** | `NEWS` |
+| **Entry** | `src/agents/retrievers/news/main.py` |
+| **Responsibility** | Real-time pharmaceutical news and regulatory updates |
+
+### Capabilities
+- `pharma_news_search` — Tavily API search for drug-related news
+- `regulatory_update_search` — FDA/EMA regulatory announcements
+- `press_release_analysis` — Company press releases and pipeline updates
+
+### Data Sources
+| Source | API | Citation |
+|--------|-----|----------|
+| Tavily Search | Tavily API | `Tavily News Search — Accessed {date}` |
+
+### Failure Behavior
+- API failure → Returns empty news (graceful degradation)
+- Timeout → 60s hard limit per search
+- DLQ → After 3 retries, message dead-lettered
+
+---
+
 ## 7. Quality Evaluator Agent (A2A)
 
 | Property | Value |
@@ -303,6 +330,54 @@
 
 ---
 
+## 12. Bootstrap Module
+
+| Property | Value |
+|----------|-------|
+| **Entry** | `src/shared/bootstrap.py` |
+| **Responsibility** | Standardized agent startup: Key Vault → Config → Telemetry |
+
+### Startup Sequence
+1. `resolve_secrets_from_keyvault()` — Fetch 17 secrets from Azure Key Vault
+2. `get_settings()` — Load Pydantic-Settings config (now includes KV secrets)
+3. `setup_telemetry(settings)` — Initialize OpenTelemetry + Azure Monitor exporters
+4. Returns `Settings` object for agent use
+
+### Usage
+```python
+from src.shared.bootstrap import bootstrap_agent
+settings = bootstrap_agent()  # Called in agent lifespan()
+```
+
+---
+
+## 13. Deep Health Checks
+
+| Property | Value |
+|----------|-------|
+| **Entry** | `src/shared/infra/health.py` |
+| **Responsibility** | Connectivity + latency validation for all backend services |
+
+### Probes
+| Backend | Method | Healthy If |
+|---------|--------|------------|
+| Cosmos DB | `read_item()` point read | < 200ms |
+| Redis | `PING` command | < 50ms |
+| Service Bus | Topic metadata list | Connects |
+| PostgreSQL | `SELECT 1` | < 100ms |
+| Azure OpenAI | `GET /openai/deployments` | < 500ms |
+
+### Output
+```json
+{
+  "status": "healthy",
+  "checks": { "cosmos": {"status": "ok", "latency_ms": 45}, ... },
+  "timestamp": "2026-03-02T..."
+}
+```
+
+---
+
 ## Celery Background Workers
 
 ### Queues
@@ -328,3 +403,24 @@
 ### Registry
 - **Redis**: Fast heartbeat (TTL 60s auto-expiry)
 - **PostgreSQL**: Persistent metadata + capability search (`capabilities @> '["patent_search"]'`)
+
+---
+
+## Unit Test Coverage
+
+> **Status**: 121 passed, 1 skipped, 0 failed (2026-03-02)
+
+| Test File | Covers |
+|-----------|--------|
+| `test_decomposer.py` | Planner intent decomposition, retry, edge cases |
+| `test_publisher.py` | Task publishing, audit trail, correlation ID |
+| `test_validator.py` | Grounding validation, rule-based conflicts |
+| `test_conflict_resolver.py` | Severity routing, Teams webhook escalation |
+| `test_report_generator.py` | Report synthesis, GO/NO-GO decision logic |
+| `test_chart_generator.py` | Revenue chart, patent timeline, safety gauge |
+| `test_pdf_engine.py` | PDF rendering, markdown conversion, Blob upload |
+| `test_quality_evaluator.py` | Scoring dimensions, fail-open, threshold |
+| `test_prompt_enhancer.py` | Strategy classification, fallback |
+| `test_reflect.py` | SPAR reflection lifecycle, dynamic thresholds |
+| `test_mcp_server.py` | Input validation, error formatting |
+| `test_dpo_training.py` | DPO pair collection, JSONL export, Azure training |

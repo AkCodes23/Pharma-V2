@@ -4,7 +4,7 @@
 
 Distributed, multi-agent pharmaceutical intelligence platform. Converts natural-language drug queries (e.g., "Should I launch generic Keytruda in India?") into citation-grounded, hallucination-free GO/NO-GO decision reports.
 
-**Architecture**: Planner → Service Bus/Kafka → 5 Retriever Agents (Legal, Clinical, Commercial, Social, Knowledge/RAG) → Quality Evaluator + Prompt Enhancer → Supervisor (Grounding Validator) → Executor (Report + PDF + Charts) → SPAR Reflection
+**Architecture**: Planner → Service Bus/Kafka → 6 Retriever Agents (Legal, Clinical, Commercial, Social, Knowledge/RAG, News) → Quality Evaluator + Prompt Enhancer → Supervisor (Grounding Validator) → Executor (Report + PDF + Charts) → SPAR Reflection
 
 ## Tech Stack
 
@@ -42,7 +42,8 @@ src/
 │   │   ├── clinical/     # Clinical trials (ClinicalTrials.gov)
 │   │   ├── commercial/   # Market data (IQVIA proxies)
 │   │   ├── social/       # Adverse events (FDA FAERS), sentiment
-│   │   └── knowledge/    # Internal docs RAG (rag_engine.py)
+│   │   ├── knowledge/    # Internal docs RAG (rag_engine.py)
+│   │   └── news/         # Pharma news (Tavily API)
 │   ├── supervisor/
 │   │   ├── main.py       # Cosmos DB Change Feed consumer
 │   │   └── validator.py  # GroundingValidator — rule-based + LLM-as-judge
@@ -54,6 +55,7 @@ src/
 │   ├── quality_evaluator/    # A2A: LLM quality scoring (accuracy/citation/relevance)
 │   └── prompt_enhancer/      # A2A: Prompt refinement on quality failure
 ├── shared/
+│   ├── bootstrap.py     # Agent startup: Key Vault → Config → Telemetry
 │   ├── config.py         # Pydantic Settings (12 service configs: Azure, Redis, Cosmos, Gremlin, NER, PubSub, etc.)
 │   ├── infra/
 │   │   ├── cosmos_client.py     # ETag optimistic concurrency
@@ -68,7 +70,8 @@ src/
 │   │   ├── celery_app.py        # 3 queues + Beat schedule
 │   │   ├── audit.py             # 21 CFR Part 11 immutable audit trail
 │   │   ├── telemetry.py         # OpenTelemetry + custom metrics
-│   │   └── websocket.py         # Real-time session updates
+│   │   ├── health.py            # Deep health checks (Cosmos, Redis, SB, PG, OpenAI)
+│   │   └── keyvault_resolver.py # Key Vault secret resolution (17 secrets)
 │   ├── models/
 │   │   ├── schemas.py    # Pydantic: Session, TaskNode, AgentResult, Citation
 │   │   └── enums.py      # PillarType, SessionStatus, TaskStatus, etc.
@@ -104,6 +107,7 @@ src/
 5. **Circuit breaker pattern** in `base_retriever.py` — fail-fast on external API outages
 6. **ETag optimistic concurrency** in `cosmos_client.py` — prevents race conditions on task status updates
 7. **Context-Constrained Decoding**: LLMs receive ONLY provided context. No parametric memory in claims
+8. **Bootstrap-first startup**: All agents call `bootstrap_agent()` before loading config (Key Vault → Settings → Telemetry)
 
 ### Environment Switching
 - `APP_ENV=development` → Kafka, ChromaDB, local Docker stack
@@ -129,8 +133,9 @@ python -m ruff check src/ tests/
 1. Create `src/agents/retrievers/<pillar>/` with `__init__.py`, `main.py`, `tools.py`
 2. Subclass `BaseRetriever` and implement `execute_tools(task) → (findings, citations)`
 3. Add Kafka topic in `docker-compose.yml` → `kafka-init` service
-4. Add Service Bus topic in `infra/main.bicep`
+4. Add Service Bus topic in `infra/bicep/main.bicep`
 5. Register AgentCard in the A2A registry
+6. Add unit test: `tests/unit/test_<pillar>_retriever.py`
 
 ### Adding a New Celery Task
 1. Create task in `src/shared/tasks/<name>_task.py`
@@ -140,10 +145,20 @@ python -m ruff check src/ tests/
 
 ## Critical Files (Review Before Changing)
 - `config.py` — All services depend on this (12 config classes). Breaking it breaks everything
-- `base_retriever.py` — Circuit breaker + retry logic shared by 5 agents
+- `bootstrap.py` — Agent startup sequence. Key Vault + Config + Telemetry. All agents depend on this
+- `base_retriever.py` — Circuit breaker + retry logic shared by 6 agents
 - `cosmos_client.py` — ETag concurrency. Incorrect changes cause race conditions
 - `graph_client.py` — Dual Neo4j/Gremlin backend. Test both paths before changing
 - `ner_service.py` — Azure NER + regex fallback. Category mapping affects entity extraction
+- `health.py` — Deep health checks. Probe failures trigger K8s pod restarts
 - `websocket.py` — Local/PubSub switch. Protocol compatibility matters
 - `servicebus_client.py` — AMQP connection caching. Pool exhaustion = deadlock
 - `docker-compose.yml` — Service dependency graph. Wrong `depends_on` = startup failures
+
+## Unit Tests (121 passed, 1 skipped, 0 failed)
+```bash
+pytest tests/unit/ -v --tb=short
+# 12 agent-core test files covering: decomposer, publisher, validator,
+# conflict_resolver, report_generator, chart_generator, pdf_engine,
+# quality_evaluator, prompt_enhancer, reflect, mcp_server, dpo_training
+```

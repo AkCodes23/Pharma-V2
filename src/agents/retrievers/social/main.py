@@ -1,12 +1,12 @@
 """
-Pharma Agentic AI — Social/Regulatory Retriever Agent.
+Pharma Agentic AI - Social/Regulatory Retriever Agent.
 
 Retrieves adverse event data and computes safety risk scores.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
@@ -14,9 +14,21 @@ from src.shared.models.schemas import Citation, TaskNode
 from src.agents.retrievers.base_retriever import BaseRetriever
 from src.agents.retrievers.social.tools import compute_safety_score, search_faers
 
+if TYPE_CHECKING:
+    from src.shared.infra.audit import AuditService
+    from src.shared.infra.cosmos_client import CosmosDBClient
+
 
 class SocialRetriever(BaseRetriever):
-    """Social/Regulatory pillar retriever — safety signal analysis."""
+    """Social/Regulatory pillar retriever - safety signal analysis."""
+
+    def __init__(
+        self,
+        cosmos: CosmosDBClient,
+        audit: AuditService,
+        subscription_name: str = "retriever-social-sub",
+    ) -> None:
+        super().__init__(cosmos=cosmos, audit=audit, subscription_name=subscription_name)
 
     @property
     def agent_type(self) -> AgentType:

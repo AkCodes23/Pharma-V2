@@ -1,12 +1,12 @@
 """
-Pharma Agentic AI — Commercial Retriever Agent.
+Pharma Agentic AI - Commercial Retriever Agent.
 
 Retrieves market intelligence data for the COMMERCIAL pillar.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
@@ -14,9 +14,21 @@ from src.shared.models.schemas import Citation, TaskNode
 from src.agents.retrievers.base_retriever import BaseRetriever
 from src.agents.retrievers.commercial.tools import get_drug_revenue, get_market_data
 
+if TYPE_CHECKING:
+    from src.shared.infra.audit import AuditService
+    from src.shared.infra.cosmos_client import CosmosDBClient
+
 
 class CommercialRetriever(BaseRetriever):
-    """Commercial pillar retriever — market and revenue analysis."""
+    """Commercial pillar retriever - market and revenue analysis."""
+
+    def __init__(
+        self,
+        cosmos: CosmosDBClient,
+        audit: AuditService,
+        subscription_name: str = "retriever-commercial-sub",
+    ) -> None:
+        super().__init__(cosmos=cosmos, audit=audit, subscription_name=subscription_name)
 
     @property
     def agent_type(self) -> AgentType:

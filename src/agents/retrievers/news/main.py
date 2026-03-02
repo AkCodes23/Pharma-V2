@@ -1,20 +1,12 @@
 """
-Pharma Agentic AI — News Retriever Agent.
+Pharma Agentic AI - News Retriever Agent.
 
 Real-time web intelligence retriever using Tavily search API.
-
-Architecture context:
-  - Service: News Retriever Agent (NEWS pillar)
-  - Responsibility: Fetching biotech news, press releases, M&A not in DB
-  - Data sources: Tavily Web Search API
-  - Data ownership: Breaking news, press releases, deal activity
-
-Efficiency: All 3 Tavily searches run concurrently via search_all().
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
@@ -22,9 +14,21 @@ from src.shared.models.schemas import Citation, TaskNode
 from src.agents.retrievers.base_retriever import BaseRetriever
 from src.agents.retrievers.news.tools import close_http_client, search_all
 
+if TYPE_CHECKING:
+    from src.shared.infra.audit import AuditService
+    from src.shared.infra.cosmos_client import CosmosDBClient
+
 
 class NewsRetriever(BaseRetriever):
-    """News pillar retriever — real-time web intelligence."""
+    """News pillar retriever - real-time web intelligence."""
+
+    def __init__(
+        self,
+        cosmos: CosmosDBClient,
+        audit: AuditService,
+        subscription_name: str = "retriever-news-sub",
+    ) -> None:
+        super().__init__(cosmos=cosmos, audit=audit, subscription_name=subscription_name)
 
     @property
     def agent_type(self) -> AgentType:
@@ -42,8 +46,7 @@ class NewsRetriever(BaseRetriever):
         """
         Execute web search tools for news intelligence.
 
-        Dispatches all 3 Tavily searches concurrently via search_all(),
-        reducing total wall time from ~90s → ~30s for 3 API calls.
+        Dispatches all 3 Tavily searches concurrently via search_all().
         """
         import asyncio
 
