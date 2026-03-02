@@ -61,6 +61,7 @@ class ServiceBusPublisher:
             PillarType.COMMERCIAL: settings.servicebus.commercial_topic,
             PillarType.SOCIAL: settings.servicebus.social_topic,
             PillarType.KNOWLEDGE: settings.servicebus.knowledge_topic,
+            PillarType.NEWS: settings.servicebus.news_topic,
         }
         # ── Cached senders (one per topic, reused across publishes) ──
         self._senders: dict[str, ServiceBusSender] = {}
@@ -236,6 +237,7 @@ class ServiceBusConsumer:
             PillarType.COMMERCIAL: settings.servicebus.commercial_topic,
             PillarType.SOCIAL: settings.servicebus.social_topic,
             PillarType.KNOWLEDGE: settings.servicebus.knowledge_topic,
+            PillarType.NEWS: settings.servicebus.news_topic,
         }
         self._topic_name = topic_map[pillar]
         self._subscription_name = subscription_name

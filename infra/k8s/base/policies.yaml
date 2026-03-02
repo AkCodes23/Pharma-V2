@@ -1,0 +1,145 @@
+# ============================================================
+# Pharma Agentic AI — K8s Network Policies & Resource Quotas
+# ============================================================
+
+# ── PodDisruptionBudget: Planner ─────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: planner-pdb
+  namespace: pharma-ai
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: planner
+---
+# ── PodDisruptionBudget: Supervisor ──────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: supervisor-pdb
+  namespace: pharma-ai
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: supervisor
+---
+# ── PodDisruptionBudget: Frontend ────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-pdb
+  namespace: pharma-ai
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: frontend
+---
+# ── NetworkPolicy: Default deny all ingress ──────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: pharma-ai
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# ── NetworkPolicy: Allow ingress to API tier ─────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-ingress
+  namespace: pharma-ai
+spec:
+  podSelector:
+    matchLabels:
+      tier: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8443
+---
+# ── NetworkPolicy: Allow ingress to frontend ─────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-ingress
+  namespace: pharma-ai
+spec:
+  podSelector:
+    matchLabels:
+      tier: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# ── NetworkPolicy: Allow internal worker communication ────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-worker-internal
+  namespace: pharma-ai
+spec:
+  podSelector:
+    matchLabels:
+      tier: worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: api
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# ── ResourceQuota ─────────────────────────────────────────────
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: pharma-ai-quota
+  namespace: pharma-ai
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: "32Gi"
+    limits.cpu: "32"
+    limits.memory: "64Gi"
+    pods: "50"
+---
+# ── LimitRange (default per-pod limits) ──────────────────────
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: pharma-ai-limits
+  namespace: pharma-ai
+spec:
+  limits:
+    - default:
+        cpu: "1000m"
+        memory: "1Gi"
+      defaultRequest:
+        cpu: "250m"
+        memory: "512Mi"
+      type: Container

@@ -1,7 +1,7 @@
 # ============================================================
-# Pharma Agentic AI — KEDA ScaledObjects
+# Pharma Agentic AI — KEDA ScaledObjects (Complete)
 # ============================================================
-# Event-driven autoscaling for retriever agents.
+# Event-driven autoscaling for ALL retriever agents and workers.
 #
 # Supports two trigger modes (selected via env):
 #   - Kafka: Direct Kafka topic lag (local dev)
@@ -63,6 +63,72 @@ spec:
         name: keda-eventhub-auth
 ---
 
+# ── Retriever: Commercial ───────────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retriever-commercial-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: retriever-commercial
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: azure-servicebus
+      metadata:
+        topicName: commercial-tasks
+        subscriptionName: retriever-commercial-sub
+        messageCount: "5"
+        connectionFromEnv: SERVICE_BUS_CONNECTION_STRING
+---
+
+# ── Retriever: Social ───────────────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retriever-social-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: retriever-social
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: azure-servicebus
+      metadata:
+        topicName: social-tasks
+        subscriptionName: retriever-social-sub
+        messageCount: "5"
+        connectionFromEnv: SERVICE_BUS_CONNECTION_STRING
+---
+
+# ── Retriever: Knowledge ────────────────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retriever-knowledge-scaler
+  namespace: pharma-ai
+spec:
+  scaleTargetRef:
+    name: retriever-knowledge
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    - type: azure-servicebus
+      metadata:
+        topicName: knowledge-tasks
+        subscriptionName: retriever-knowledge-sub
+        messageCount: "5"
+        connectionFromEnv: SERVICE_BUS_CONNECTION_STRING
+---
+
 # ── Retriever: News ──────────────────────────────────────────
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -90,8 +156,6 @@ spec:
 ---
 
 # ── Celery Workers ───────────────────────────────────────────
-# Celery workers scale on Azure Service Bus queue length
-# (if Celery broker is swapped to SB) or Redis list length.
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:

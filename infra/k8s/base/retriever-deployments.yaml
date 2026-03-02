@@ -1,0 +1,325 @@
+# ============================================================
+# Pharma Agentic AI — K8s Retriever Deployments
+# ============================================================
+# Standardized deployment template for all 6 retriever agents.
+# Each retriever subscribes to a specific Service Bus topic
+# and processes tasks for its pillar.
+# ============================================================
+
+# ── Retriever: Legal ─────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retriever-legal
+  namespace: pharma-ai
+  labels:
+    app: retriever-legal
+    tier: worker
+    pillar: legal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retriever-legal
+  template:
+    metadata:
+      labels:
+        app: retriever-legal
+        tier: worker
+        pillar: legal
+    spec:
+      containers:
+        - name: retriever-legal
+          image: pharma-ai/retriever-legal:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          env:
+            - name: PILLAR
+              value: "LEGAL"
+            - name: SERVICE_BUS_SUBSCRIPTION
+              value: "retriever-legal-sub"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+# ── Retriever: Clinical ──────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retriever-clinical
+  namespace: pharma-ai
+  labels:
+    app: retriever-clinical
+    tier: worker
+    pillar: clinical
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retriever-clinical
+  template:
+    metadata:
+      labels:
+        app: retriever-clinical
+        tier: worker
+        pillar: clinical
+    spec:
+      containers:
+        - name: retriever-clinical
+          image: pharma-ai/retriever-clinical:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          env:
+            - name: PILLAR
+              value: "CLINICAL"
+            - name: SERVICE_BUS_SUBSCRIPTION
+              value: "retriever-clinical-sub"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+# ── Retriever: Commercial ────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retriever-commercial
+  namespace: pharma-ai
+  labels:
+    app: retriever-commercial
+    tier: worker
+    pillar: commercial
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retriever-commercial
+  template:
+    metadata:
+      labels:
+        app: retriever-commercial
+        tier: worker
+        pillar: commercial
+    spec:
+      containers:
+        - name: retriever-commercial
+          image: pharma-ai/retriever-commercial:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          env:
+            - name: PILLAR
+              value: "COMMERCIAL"
+            - name: SERVICE_BUS_SUBSCRIPTION
+              value: "retriever-commercial-sub"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+# ── Retriever: Social ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retriever-social
+  namespace: pharma-ai
+  labels:
+    app: retriever-social
+    tier: worker
+    pillar: social
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retriever-social
+  template:
+    metadata:
+      labels:
+        app: retriever-social
+        tier: worker
+        pillar: social
+    spec:
+      containers:
+        - name: retriever-social
+          image: pharma-ai/retriever-social:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          env:
+            - name: PILLAR
+              value: "SOCIAL"
+            - name: SERVICE_BUS_SUBSCRIPTION
+              value: "retriever-social-sub"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+# ── Retriever: Knowledge ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retriever-knowledge
+  namespace: pharma-ai
+  labels:
+    app: retriever-knowledge
+    tier: worker
+    pillar: knowledge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retriever-knowledge
+  template:
+    metadata:
+      labels:
+        app: retriever-knowledge
+        tier: worker
+        pillar: knowledge
+    spec:
+      containers:
+        - name: retriever-knowledge
+          image: pharma-ai/retriever-knowledge:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          env:
+            - name: PILLAR
+              value: "KNOWLEDGE"
+            - name: SERVICE_BUS_SUBSCRIPTION
+              value: "retriever-knowledge-sub"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+# ── Retriever: News ──────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retriever-news
+  namespace: pharma-ai
+  labels:
+    app: retriever-news
+    tier: worker
+    pillar: news
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: retriever-news
+  template:
+    metadata:
+      labels:
+        app: retriever-news
+        tier: worker
+        pillar: news
+    spec:
+      containers:
+        - name: retriever-news
+          image: pharma-ai/retriever-news:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          env:
+            - name: PILLAR
+              value: "NEWS"
+            - name: SERVICE_BUS_SUBSCRIPTION
+              value: "retriever-news-sub"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10

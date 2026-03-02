@@ -1,0 +1,326 @@
+# ============================================================
+# Pharma Agentic AI — Supporting Agent Deployments
+# ============================================================
+# Quality Evaluator, Prompt Enhancer, MCP Server,
+# Celery Worker, and Celery Beat deployments.
+# ============================================================
+
+# ── Quality Evaluator ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quality-evaluator
+  namespace: pharma-ai
+  labels:
+    app: quality-evaluator
+    tier: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: quality-evaluator
+  template:
+    metadata:
+      labels:
+        app: quality-evaluator
+        tier: worker
+    spec:
+      containers:
+        - name: quality-evaluator
+          image: pharma-ai/quality-evaluator:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# ── Prompt Enhancer ──────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prompt-enhancer
+  namespace: pharma-ai
+  labels:
+    app: prompt-enhancer
+    tier: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prompt-enhancer
+  template:
+    metadata:
+      labels:
+        app: prompt-enhancer
+        tier: worker
+    spec:
+      containers:
+        - name: prompt-enhancer
+          image: pharma-ai/prompt-enhancer:latest
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "768Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# ── MCP Server ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: pharma-ai
+  labels:
+    app: mcp-server
+    tier: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+        tier: api
+    spec:
+      containers:
+        - name: mcp-server
+          image: pharma-ai/mcp-server:latest
+          ports:
+            - containerPort: 8443
+              name: mcp
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "768Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8443
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server-service
+  namespace: pharma-ai
+spec:
+  selector:
+    app: mcp-server
+  ports:
+    - port: 8443
+      targetPort: 8443
+      name: mcp
+  type: ClusterIP
+---
+# ── Celery Worker ────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  namespace: pharma-ai
+  labels:
+    app: celery-worker
+    tier: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+        tier: worker
+    spec:
+      containers:
+        - name: celery-worker
+          image: pharma-ai/celery-worker:latest
+          command: ["celery", "-A", "src.shared.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            exec:
+              command: ["celery", "-A", "src.shared.celery_app", "inspect", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+# ── Celery Beat (Scheduler) ──────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+  namespace: pharma-ai
+  labels:
+    app: celery-beat
+    tier: scheduler
+spec:
+  replicas: 1  # CRITICAL: Must be exactly 1 replica
+  strategy:
+    type: Recreate  # No rolling update — only one beat instance
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+        tier: scheduler
+    spec:
+      containers:
+        - name: celery-beat
+          image: pharma-ai/celery-worker:latest
+          command: ["celery", "-A", "src.shared.celery_app", "beat", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "250m"
+              memory: "512Mi"
+---
+# ── Frontend (Next.js) ───────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: pharma-ai
+  labels:
+    app: frontend
+    tier: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: web
+    spec:
+      containers:
+        - name: frontend
+          image: pharma-ai/frontend:latest
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: pharma-config
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: pharma-ai
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  type: ClusterIP
+---
+# ── Ingress (NGINX) ──────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pharma-ai-ingress
+  namespace: pharma-ai
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - pharmaai.example.com
+      secretName: pharma-ai-tls
+  rules:
+    - host: pharmaai.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: planner-service
+                port:
+                  number: 8000
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-server-service
+                port:
+                  number: 8443
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 3000

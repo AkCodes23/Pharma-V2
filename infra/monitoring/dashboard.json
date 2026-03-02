@@ -1,0 +1,129 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2020-09-01/dashboardDefinition.json",
+  "metadata": {
+    "model": {
+      "title": "Pharma AI Platform — Operations Dashboard",
+      "timeRange": { "relative": { "duration": 24, "timeUnit": 1 } },
+      "filters": {
+        "MsPortalFx_TimeRange": {
+          "model": { "format": "local", "granularity": "auto" }
+        }
+      }
+    }
+  },
+  "lenses": {
+    "0": {
+      "order": 0,
+      "parts": {
+        "0": {
+          "position": { "x": 0, "y": 0, "colSpan": 6, "rowSpan": 4 },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "settings": {
+              "title": "Session Throughput (per hour)",
+              "query": "customEvents | where name == 'SESSION_COMPLETED' | summarize count() by bin(timestamp, 1h) | render timechart"
+            }
+          }
+        },
+        "1": {
+          "position": { "x": 6, "y": 0, "colSpan": 6, "rowSpan": 4 },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "settings": {
+              "title": "Agent Latency (p50/p95/p99)",
+              "query": "dependencies | where target contains 'openai' | summarize p50=percentile(duration, 50), p95=percentile(duration, 95), p99=percentile(duration, 99) by bin(timestamp, 5m) | render timechart"
+            }
+          }
+        },
+        "2": {
+          "position": { "x": 0, "y": 4, "colSpan": 4, "rowSpan": 4 },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "settings": {
+              "title": "Error Rate by Agent",
+              "query": "exceptions | summarize count() by cloud_RoleName, bin(timestamp, 1h) | render barchart"
+            }
+          }
+        },
+        "3": {
+          "position": { "x": 4, "y": 4, "colSpan": 4, "rowSpan": 4 },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "settings": {
+              "title": "Grounding Score Distribution",
+              "query": "customMetrics | where name == 'grounding_score' | summarize avg(value), min(value), max(value) by bin(timestamp, 1h) | render timechart"
+            }
+          }
+        },
+        "4": {
+          "position": { "x": 8, "y": 4, "colSpan": 4, "rowSpan": 4 },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "settings": {
+              "title": "Decision Distribution (GO/NO-GO/CONDITIONAL)",
+              "query": "customEvents | where name == 'SESSION_COMPLETED' | extend decision = tostring(customDimensions.decision) | summarize count() by decision | render piechart"
+            }
+          }
+        },
+        "5": {
+          "position": { "x": 0, "y": 8, "colSpan": 6, "rowSpan": 4 },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "settings": {
+              "title": "Service Bus Dead Letter Queue Depth",
+              "query": "AzureMetrics | where ResourceProvider == 'MICROSOFT.SERVICEBUS' | where MetricName == 'DeadletteredMessages' | summarize max(Total) by Resource, bin(TimeGenerated, 5m) | render timechart"
+            }
+          }
+        },
+        "6": {
+          "position": { "x": 6, "y": 8, "colSpan": 6, "rowSpan": 4 },
+          "metadata": {
+            "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+            "settings": {
+              "title": "Container App Replica Count",
+              "query": "AzureMetrics | where ResourceProvider == 'MICROSOFT.APP' | where MetricName == 'Replicas' | summarize max(Total) by Resource, bin(TimeGenerated, 5m) | render timechart"
+            }
+          }
+        }
+      }
+    }
+  },
+  "alertRules": [
+    {
+      "name": "High Error Rate",
+      "description": "Alert when error rate exceeds 5% of requests",
+      "severity": 2,
+      "frequency": "PT5M",
+      "windowSize": "PT15M",
+      "query": "requests | summarize errorRate = todouble(countif(success == false)) / count() * 100 | where errorRate > 5",
+      "threshold": 5
+    },
+    {
+      "name": "Low Grounding Score",
+      "description": "Alert when average grounding score drops below 0.6",
+      "severity": 3,
+      "frequency": "PT15M",
+      "windowSize": "PT1H",
+      "query": "customMetrics | where name == 'grounding_score' | summarize avg(value) | where avg_value < 0.6",
+      "threshold": 0.6
+    },
+    {
+      "name": "DLQ Accumulation",
+      "description": "Alert when DLQ messages exceed 10 across any topic",
+      "severity": 1,
+      "frequency": "PT5M",
+      "windowSize": "PT10M",
+      "query": "AzureMetrics | where MetricName == 'DeadletteredMessages' | summarize max(Total) | where max_Total > 10",
+      "threshold": 10
+    },
+    {
+      "name": "Session Timeout",
+      "description": "Alert when sessions remain in RETRIEVING for >10 minutes",
+      "severity": 2,
+      "frequency": "PT5M",
+      "windowSize": "PT15M",
+      "query": "customEvents | where name == 'SESSION_TIMEOUT' | summarize count() | where count_ > 0",
+      "threshold": 1
+    }
+  ]
+}

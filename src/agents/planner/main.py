@@ -17,6 +17,7 @@ Architecture context:
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
@@ -51,8 +52,9 @@ async def lifespan(app: FastAPI):
     """Application lifecycle: initialize and cleanup resources."""
     global _cosmos, _publisher, _decomposer, _redis
 
-    # Setup telemetry
-    setup_telemetry("planner-agent")
+    # Bootstrap: Key Vault → config → telemetry (ordered)
+    from src.shared.bootstrap import bootstrap_agent
+    bootstrap_agent(agent_name="planner-agent")
 
     # Initialize infrastructure
     _cosmos = CosmosDBClient()
@@ -73,6 +75,12 @@ async def lifespan(app: FastAPI):
     logger.info("Planner Agent stopped")
 
 
+# Allowed CORS origins — restrict in production
+_CORS_ORIGINS = os.environ.get(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:3001",
+).split(",")
+
 app = FastAPI(
     title="Pharma Agentic AI — Planner Agent",
     description="Decomposes pharmaceutical strategic queries into multi-agent task graphs.",
@@ -80,13 +88,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for frontend
+# CORS for frontend — restricted origins (no wildcard in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Correlation-ID"],
 )
 
 # OpenTelemetry instrumentation
