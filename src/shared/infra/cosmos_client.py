@@ -30,6 +30,7 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFo
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.shared.config import get_settings
+from src.shared.infra.cache_middleware import get_session_cache
 from src.shared.models.enums import SessionStatus, TaskStatus
 from src.shared.models.schemas import AgentResult, AuditEntry, Session, TaskNode, ValidationResult
 
@@ -61,6 +62,7 @@ class CosmosDBClient:
         self._database = self._client.get_database_client(settings.cosmos.database_name)
         self._sessions = self._database.get_container_client(settings.cosmos.session_container)
         self._audit = self._database.get_container_client(settings.cosmos.audit_container)
+        self._session_cache = get_session_cache()
         logger.info(
             "CosmosDBClient initialized",
             extra={"database": settings.cosmos.database_name},
@@ -108,6 +110,7 @@ class CosmosDBClient:
             body=doc,
             populate_query_metrics=True,
         )
+        self._session_cache.cache_session(session.id, doc)
         logger.info(
             "Session created",
             extra={"session_id": session.id, "status": session.status},
@@ -132,7 +135,12 @@ class CosmosDBClient:
         Raises:
             CosmosHttpResponseError: If session not found or DB error.
         """
+        cached = self._session_cache.get_cached_session(session_id)
+        if cached is not None:
+            return Session.model_validate(cached)
+
         doc = self._sessions.read_item(item=session_id, partition_key=session_id)
+        self._session_cache.cache_session(session_id, doc)
         return Session.model_validate(doc)
 
     def get_session_with_etag(self, session_id: str) -> tuple[Session, str]:
@@ -203,6 +211,7 @@ class CosmosDBClient:
                     etag=etag,
                     match_condition="IfMatch",
                 )
+                self._session_cache.invalidate(session_id)
                 logger.info(
                     "Task status updated (optimistic concurrency)",
                     extra={
@@ -296,6 +305,54 @@ class CosmosDBClient:
             },
         )
 
+    def write_audit_entries(self, entries: list[AuditEntry]) -> int:
+        """
+        Write multiple immutable audit entries.
+
+        Attempts Cosmos item-batch operations grouped by partition key
+        (session_id) and falls back to one-by-one writes when batch APIs
+        are unavailable.
+        """
+        if not entries:
+            return 0
+
+        grouped: dict[str, list[AuditEntry]] = {}
+        for entry in entries:
+            grouped.setdefault(entry.session_id, []).append(entry)
+
+        success_count = 0
+        batch_method = getattr(self._audit, "execute_item_batch", None)
+
+        for session_id, group in grouped.items():
+            if callable(batch_method):
+                docs = [json.loads(entry.model_dump_json()) for entry in group]
+                operations = [("create", (doc,), {}) for doc in docs]
+                try:
+                    try:
+                        batch_method(batch_operations=operations, partition_key=session_id)
+                    except TypeError:
+                        batch_method(operations, partition_key=session_id)
+                    success_count += len(group)
+                    continue
+                except Exception:
+                    logger.debug(
+                        "Cosmos batch audit write unavailable; falling back to single-item writes",
+                        extra={"session_id": session_id},
+                        exc_info=True,
+                    )
+
+            for entry in group:
+                try:
+                    self.write_audit_entry(entry)
+                    success_count += 1
+                except Exception:
+                    logger.exception(
+                        "Failed to write audit entry",
+                        extra={"session_id": entry.session_id, "entry_id": entry.entry_id},
+                    )
+
+        return success_count
+
     def query_audit_trail(
         self,
         session_id: str,
@@ -336,3 +393,82 @@ class CosmosDBClient:
             partition_key=session_id,
             patch_operations=operations,
         )
+        self._session_cache.invalidate(session_id)
+
+    def list_sessions(
+        self,
+        *,
+        drug_name: str = "",
+        user_id: str = "",
+        status: str = "",
+        limit: int = 10,
+        offset: int = 0,
+    ) -> tuple[list[Session], int]:
+        """List sessions with optional filtering and pagination."""
+        limit = max(1, min(limit, 100))
+        offset = max(0, offset)
+
+        where_clauses: list[str] = []
+        params: list[dict[str, Any]] = []
+
+        if drug_name:
+            where_clauses.append("CONTAINS(LOWER(c.parameters.drug_name), LOWER(@drug_name))")
+            params.append({"name": "@drug_name", "value": drug_name})
+        if user_id:
+            where_clauses.append("c.user_id = @user_id")
+            params.append({"name": "@user_id", "value": user_id})
+        if status:
+            where_clauses.append("c.status = @status")
+            params.append({"name": "@status", "value": status})
+
+        where_sql = f" WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        count_query = f"SELECT VALUE COUNT(1) FROM c{where_sql}"
+        total_items = list(
+            self._sessions.query_items(
+                query=count_query,
+                parameters=params,
+                enable_cross_partition_query=True,
+            )
+        )
+        total = int(total_items[0]) if total_items else 0
+
+        page_query = (
+            f"SELECT * FROM c{where_sql} "
+            "ORDER BY c.created_at DESC "
+            "OFFSET @offset LIMIT @limit"
+        )
+        page_params = params + [
+            {"name": "@offset", "value": offset},
+            {"name": "@limit", "value": limit},
+        ]
+        items = list(
+            self._sessions.query_items(
+                query=page_query,
+                parameters=page_params,
+                enable_cross_partition_query=True,
+            )
+        )
+        sessions = [Session.model_validate(item) for item in items]
+        return sessions, total
+
+    def list_audit_entries(
+        self,
+        *,
+        limit: int = 100,
+        session_id: str = "",
+    ) -> list[AuditEntry]:
+        """List recent audit entries, optionally filtered by session."""
+        limit = max(1, min(limit, 500))
+        where_sql = " WHERE c.session_id = @session_id" if session_id else ""
+        params = [{"name": "@session_id", "value": session_id}] if session_id else []
+        query = f"SELECT TOP {limit} * FROM c{where_sql} ORDER BY c.timestamp DESC"
+
+        items = list(
+            self._audit.query_items(
+                query=query,
+                parameters=params,
+                enable_cross_partition_query=True,
+            )
+        )
+        return [AuditEntry.model_validate(item) for item in items]

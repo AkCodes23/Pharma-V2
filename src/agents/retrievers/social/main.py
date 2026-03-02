@@ -12,6 +12,7 @@ from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
 
 from src.agents.retrievers.base_retriever import BaseRetriever
+from src.agents.retrievers.runtime import create_retriever_app, run_retriever_service
 from src.agents.retrievers.social.tools import compute_safety_score, search_faers
 
 if TYPE_CHECKING:
@@ -62,3 +63,14 @@ class SocialRetriever(BaseRetriever):
             findings["faers_error"] = str(e)
 
         return findings, citations
+
+
+app = create_retriever_app(
+    SocialRetriever,
+    agent_name="retriever-social",
+    default_subscription="retriever-social-sub",
+)
+
+
+if __name__ == "__main__":
+    run_retriever_service(app)

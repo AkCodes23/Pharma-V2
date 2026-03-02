@@ -127,13 +127,21 @@ class ServiceBusBroker(MessageBroker):
         from src.shared.models.enums import PillarType
         from src.shared.models.schemas import ServiceBusMessage
 
-        # Map topic name to PillarType
+        # Source of truth is Service Bus topic naming: "*-tasks".
+        # Keep legacy Kafka-style aliases for backward compatibility.
         pillar_map = {
+            "legal-tasks": PillarType.LEGAL,
+            "clinical-tasks": PillarType.CLINICAL,
+            "commercial-tasks": PillarType.COMMERCIAL,
+            "social-tasks": PillarType.SOCIAL,
+            "knowledge-tasks": PillarType.KNOWLEDGE,
+            "news-tasks": PillarType.NEWS,
             "pharma.tasks.legal": PillarType.LEGAL,
             "pharma.tasks.clinical": PillarType.CLINICAL,
             "pharma.tasks.commercial": PillarType.COMMERCIAL,
             "pharma.tasks.social": PillarType.SOCIAL,
             "pharma.tasks.knowledge": PillarType.KNOWLEDGE,
+            "pharma.tasks.news": PillarType.NEWS,
         }
         pillar = pillar_map.get(topic)
         if not pillar:

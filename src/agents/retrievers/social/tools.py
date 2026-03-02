@@ -14,6 +14,7 @@ Architecture context:
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import logging
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ from src.shared.models.schemas import Citation
 
 logger = logging.getLogger(__name__)
 _HTTP_TIMEOUT = 30.0
+_HTTP_CLIENT: httpx.Client | None = None
 
 
 def _hash(data: str | bytes) -> str:
@@ -34,6 +36,24 @@ def _hash(data: str | bytes) -> str:
     if isinstance(data, str):
         data = data.encode()
     return hashlib.sha256(data).hexdigest()
+
+
+def _get_http_client() -> httpx.Client:
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None:
+        _HTTP_CLIENT = httpx.Client(
+            timeout=_HTTP_TIMEOUT,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _HTTP_CLIENT
+
+
+def _close_client() -> None:
+    if _HTTP_CLIENT is not None:
+        _HTTP_CLIENT.close()
+
+
+atexit.register(_close_client)
 
 
 # ── FDA FAERS (openFDA API) ────────────────────────────────
@@ -66,9 +86,9 @@ def search_faers(
         "limit": min(max_results, 100),
     }
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.get(base_url, params=params)
-        response.raise_for_status()
+    client = _get_http_client()
+    response = client.get(base_url, params=params)
+    response.raise_for_status()
 
     raw_text = response.text
     data = response.json()
@@ -196,9 +216,9 @@ def search_pubmed_safety(
         "retmode": "json",
     }
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        search_resp = client.get(search_url, params=search_params)
-        search_resp.raise_for_status()
+    client = _get_http_client()
+    search_resp = client.get(search_url, params=search_params)
+    search_resp.raise_for_status()
 
     search_data = search_resp.json()
     pmids = search_data.get("esearchresult", {}).get("idlist", [])
@@ -215,9 +235,8 @@ def search_pubmed_safety(
         "retmode": "json",
     }
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        summary_resp = client.get(summary_url, params=summary_params)
-        summary_resp.raise_for_status()
+    summary_resp = client.get(summary_url, params=summary_params)
+    summary_resp.raise_for_status()
 
     raw_text = summary_resp.text
     summary_data = summary_resp.json()

@@ -28,6 +28,7 @@ import json
 import logging
 import time
 import threading
+import concurrent.futures
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -207,6 +208,11 @@ class BaseRetriever(ABC):
         self._rag_retriever = None
         # Carries RAG context from _augment_with_rag() to execute_tools()
         self._rag_context: str = ""
+        # Reuse a single worker thread for timeout-controlled execution.
+        self._tool_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"{self.agent_type.value.lower()}-tools",
+        )
 
     @property
     @abstractmethod
@@ -247,30 +253,17 @@ class BaseRetriever(ABC):
         Uses a daemon thread to enforce the timeout. If execution
         exceeds EXECUTION_TIMEOUT_SECONDS, raises ExecutionTimeoutError.
         """
-        result: tuple[dict[str, Any], list[Citation]] | None = None
-        error: Exception | None = None
-
-        def _worker() -> None:
-            nonlocal result, error
-            try:
-                result = self.execute_tools(task)
-            except Exception as e:
-                error = e
-
-        thread = threading.Thread(target=_worker, daemon=True)
-        thread.start()
-        thread.join(timeout=self.EXECUTION_TIMEOUT_SECONDS)
-
-        if thread.is_alive():
+        future: concurrent.futures.Future[tuple[dict[str, Any], list[Citation]]] = (
+            self._tool_executor.submit(self.execute_tools, task)
+        )
+        try:
+            return future.result(timeout=self.EXECUTION_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError as exc:
+            future.cancel()
             raise ExecutionTimeoutError(
                 f"{self.agent_type.value} tool execution exceeded "
                 f"{self.EXECUTION_TIMEOUT_SECONDS}s timeout"
-            )
-        if error is not None:
-            raise error
-        if result is None:
-            raise RuntimeError("Tool execution returned None unexpectedly")
-        return result
+            ) from exc
 
     def handle_message(self, message: ServiceBusMessage) -> None:
         """
@@ -482,18 +475,14 @@ class BaseRetriever(ABC):
                 return ""
 
             retriever = RagRetriever()
-            loop = _asyncio.new_event_loop()
-            try:
-                ctx = loop.run_until_complete(
-                    retriever.retrieve(
-                        query=query,
-                        pillar=self.pillar.value,
-                        drug_name=drug_name,
-                        top_k=5,
-                    )
+            ctx = _asyncio.run(
+                retriever.retrieve(
+                    query=query,
+                    pillar=self.pillar.value,
+                    drug_name=drug_name,
+                    top_k=5,
                 )
-            finally:
-                loop.close()
+            )
 
             if ctx.is_empty:
                 logger.debug(
@@ -523,10 +512,14 @@ class BaseRetriever(ABC):
     def start(self) -> None:
         """Start the consumption loop."""
         logger.info("Starting retriever agent", extra={"agent_type": self.agent_type})
-        self._consumer.consume(handler=self.handle_message)
+        self._consumer.consume(
+            handler=self.handle_message,
+            max_messages=self._consumer.PREFETCH_COUNT,
+        )
 
     def stop(self) -> None:
         """Stop the consumption loop and cleanup."""
         self._consumer.close()
+        self._tool_executor.shutdown(wait=False, cancel_futures=True)
         logger.info("Retriever agent stopped", extra={"agent_type": self.agent_type})
 

@@ -14,6 +14,7 @@ from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
 
 from src.agents.retrievers.base_retriever import BaseRetriever
+from src.agents.retrievers.runtime import create_retriever_app, run_retriever_service
 from src.agents.retrievers.legal.tools import (
     search_ipo_patents,
     search_orange_book,
@@ -111,3 +112,14 @@ class LegalRetriever(BaseRetriever):
             findings["earliest_generic_entry"] = max(all_expiry_dates)
 
         return findings, citations
+
+
+app = create_retriever_app(
+    LegalRetriever,
+    agent_name="retriever-legal",
+    default_subscription="retriever-legal-sub",
+)
+
+
+if __name__ == "__main__":
+    run_retriever_service(app)

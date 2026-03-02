@@ -12,6 +12,7 @@ from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
 
 from src.agents.retrievers.base_retriever import BaseRetriever
+from src.agents.retrievers.runtime import create_retriever_app, run_retriever_service
 from src.agents.retrievers.news.tools import close_http_client, search_all
 
 if TYPE_CHECKING:
@@ -56,8 +57,8 @@ class NewsRetriever(BaseRetriever):
         target_market = params.get("target_market", "US")
         therapeutic_area = params.get("therapeutic_area")
 
-        # Run all 3 searches concurrently in the event loop
-        articles, releases, deals, citations = asyncio.get_event_loop().run_until_complete(
+        # Run all 3 searches concurrently using a dedicated event loop.
+        articles, releases, deals, citations = asyncio.run(
             search_all(
                 drug_name=drug_name,
                 target_market=target_market,
@@ -89,3 +90,14 @@ class NewsRetriever(BaseRetriever):
         }
 
         return findings, citations
+
+
+app = create_retriever_app(
+    NewsRetriever,
+    agent_name="retriever-news",
+    default_subscription="retriever-news-sub",
+)
+
+
+if __name__ == "__main__":
+    run_retriever_service(app)

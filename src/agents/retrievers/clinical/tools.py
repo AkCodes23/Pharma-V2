@@ -13,6 +13,7 @@ Architecture context:
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -28,6 +29,8 @@ from src.shared.models.schemas import Citation
 logger = logging.getLogger(__name__)
 _HTTP_TIMEOUT = 30.0
 _CDSCO_TIMEOUT = 45.0
+_HTTP_CLIENT: httpx.Client | None = None
+_CDSCO_CLIENT: httpx.Client | None = None
 
 
 def _hash_response(data: str | bytes) -> str:
@@ -35,6 +38,37 @@ def _hash_response(data: str | bytes) -> str:
     if isinstance(data, str):
         data = data.encode("utf-8")
     return hashlib.sha256(data).hexdigest()
+
+
+def _get_http_client() -> httpx.Client:
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None:
+        _HTTP_CLIENT = httpx.Client(
+            timeout=_HTTP_TIMEOUT,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _HTTP_CLIENT
+
+
+def _get_cdsco_client() -> httpx.Client:
+    global _CDSCO_CLIENT
+    if _CDSCO_CLIENT is None:
+        _CDSCO_CLIENT = httpx.Client(
+            timeout=_CDSCO_TIMEOUT,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _CDSCO_CLIENT
+
+
+def _close_clients() -> None:
+    if _HTTP_CLIENT is not None:
+        _HTTP_CLIENT.close()
+    if _CDSCO_CLIENT is not None:
+        _CDSCO_CLIENT.close()
+
+
+atexit.register(_close_clients)
 
 
 # ── ClinicalTrials.gov v2 API ──────────────────────────────
@@ -76,9 +110,9 @@ def search_clinical_trials(
         ),
     }
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.get(base_url, params=params)
-        response.raise_for_status()
+    client = _get_http_client()
+    response = client.get(base_url, params=params)
+    response.raise_for_status()
 
     raw_text = response.text
     data = response.json()
@@ -149,9 +183,9 @@ def search_fda_approvals(
         "limit": 5,
     }
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.get(base_url, params=params)
-        response.raise_for_status()
+    client = _get_http_client()
+    response = client.get(base_url, params=params)
+    response.raise_for_status()
 
     raw_text = response.text
     data = response.json()
@@ -205,26 +239,26 @@ def search_cdsco_drugs(
     cdsco_search_url = "https://cdscoonline.gov.in/CDSCO/Drugs"
 
     try:
-        with httpx.Client(timeout=_CDSCO_TIMEOUT, follow_redirects=True) as client:
-            # Step 1: Get the main search page for session/cookies
-            page_resp = client.get("https://cdscoonline.gov.in/CDSCO/Drugs")
-            page_resp.raise_for_status()
+        client = _get_cdsco_client()
+        # Step 1: Get the main search page for session/cookies
+        page_resp = client.get("https://cdscoonline.gov.in/CDSCO/Drugs")
+        page_resp.raise_for_status()
 
-            # Step 2: Submit search form
-            form_data = {
-                "DrugName": drug_name,
-                "SearchType": "DrugName",
-            }
-            headers = {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": "https://cdscoonline.gov.in/CDSCO/Drugs",
-            }
+        # Step 2: Submit search form
+        form_data = {
+            "DrugName": drug_name,
+            "SearchType": "DrugName",
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": "https://cdscoonline.gov.in/CDSCO/Drugs",
+        }
 
-            search_resp = client.post(cdsco_search_url, data=form_data, headers=headers)
-            search_resp.raise_for_status()
+        search_resp = client.post(cdsco_search_url, data=form_data, headers=headers)
+        search_resp.raise_for_status()
 
-            # Step 3: Parse HTML results
-            records = _parse_cdsco_html(search_resp.text, drug_name, market)
+        # Step 3: Parse HTML results
+        records = _parse_cdsco_html(search_resp.text, drug_name, market)
 
         raw_json = json.dumps(records, default=str)
         citation = Citation(
@@ -331,3 +365,15 @@ def _cdsco_fallback(
     )
 
     return [fallback_record], citation
+
+
+def search_cdsco(
+    drug_name: str,
+    market: str = "India",
+) -> tuple[list[dict[str, Any]], Citation]:
+    """
+    Backward-compatible alias for CDSCO lookup.
+
+    Some integrations import ``search_cdsco`` directly.
+    """
+    return search_cdsco_drugs(drug_name=drug_name, market=market)

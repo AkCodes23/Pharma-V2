@@ -12,6 +12,7 @@ from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
 
 from src.agents.retrievers.base_retriever import BaseRetriever
+from src.agents.retrievers.runtime import create_retriever_app, run_retriever_service
 from src.agents.retrievers.commercial.tools import get_drug_revenue, get_market_data
 
 if TYPE_CHECKING:
@@ -79,3 +80,14 @@ class CommercialRetriever(BaseRetriever):
             findings["market_attractiveness"] = "LOW"
 
         return findings, citations
+
+
+app = create_retriever_app(
+    CommercialRetriever,
+    agent_name="retriever-commercial",
+    default_subscription="retriever-commercial-sub",
+)
+
+
+if __name__ == "__main__":
+    run_retriever_service(app)

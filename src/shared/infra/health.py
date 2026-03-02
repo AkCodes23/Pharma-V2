@@ -42,11 +42,11 @@ async def deep_health_check() -> dict[str, Any]:
         start = time.monotonic()
         from azure.cosmos import CosmosClient
         client = CosmosClient(
-            url=settings.cosmos_db.endpoint,
-            credential=settings.cosmos_db.key,
+            url=settings.cosmos.endpoint,
+            credential=settings.cosmos.key,
         )
         # Read database metadata (lightweight check)
-        db = client.get_database_client(settings.cosmos_db.database)
+        db = client.get_database_client(settings.cosmos.database_name)
         db.read()
         latency_ms = (time.monotonic() - start) * 1000
         components["cosmos_db"] = {"status": "healthy", "latency_ms": round(latency_ms, 1)}

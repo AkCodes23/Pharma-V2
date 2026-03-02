@@ -23,7 +23,6 @@ Performance optimizations:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -68,19 +67,21 @@ class AuditService:
         self._cosmos = cosmos_client
         self._buffer: deque[AuditEntry] = deque()
         self._lock = threading.Lock()
-        self._flush_timer: threading.Timer | None = None
-        self._start_flush_timer()
+        self._stop_event = threading.Event()
+        self._flush_requested = threading.Event()
+        self._flush_worker = threading.Thread(
+            target=self._flush_loop,
+            name="audit-flush-worker",
+            daemon=True,
+        )
+        self._flush_worker.start()
 
-    def _start_flush_timer(self) -> None:
-        """Start the periodic flush timer."""
-        self._flush_timer = threading.Timer(FLUSH_INTERVAL_SECONDS, self._periodic_flush)
-        self._flush_timer.daemon = True
-        self._flush_timer.start()
-
-    def _periodic_flush(self) -> None:
-        """Called by the timer to flush buffered entries."""
-        self._flush()
-        self._start_flush_timer()
+    def _flush_loop(self) -> None:
+        """Background loop that flushes on threshold signal or interval."""
+        while not self._stop_event.is_set():
+            self._flush_requested.wait(timeout=FLUSH_INTERVAL_SECONDS)
+            self._flush_requested.clear()
+            self._flush()
 
     def log(
         self,
@@ -146,24 +147,12 @@ class AuditService:
 
         # Flush immediately if buffer exceeds threshold
         if buffer_size >= BATCH_THRESHOLD:
-            self._flush()
+            self._flush_requested.set()
 
         return entry
 
-    def _flush(self) -> None:
-        """
-        Flush all buffered audit entries to Cosmos DB.
-
-        Drains the entire buffer in a single batch. If any write
-        fails, the entry is logged to stderr for manual recovery
-        (compliance gap alert).
-        """
-        with self._lock:
-            if not self._buffer:
-                return
-            entries = list(self._buffer)
-            self._buffer.clear()
-
+    def _write_entries_one_by_one(self, entries: list[AuditEntry]) -> int:
+        """Fallback writer when bulk APIs are unavailable."""
         success_count = 0
         for entry in entries:
             try:
@@ -180,6 +169,32 @@ class AuditService:
                         "entry_id": entry.entry_id,
                     },
                 )
+        return success_count
+
+    def _flush(self) -> None:
+        """
+        Flush all buffered audit entries to Cosmos DB.
+
+        Drains the entire buffer in a single batch. If any write
+        fails, the entry is logged to stderr for manual recovery
+        (compliance gap alert).
+        """
+        with self._lock:
+            if not self._buffer:
+                return
+            entries = list(self._buffer)
+            self._buffer.clear()
+
+        success_count = 0
+        batch_writer = getattr(self._cosmos, "write_audit_entries", None)
+        if callable(batch_writer):
+            try:
+                success_count = int(batch_writer(entries))
+            except Exception:
+                logger.exception("Batch audit write failed; falling back to single-item writes")
+                success_count = self._write_entries_one_by_one(entries)
+        else:
+            success_count = self._write_entries_one_by_one(entries)
 
         if success_count > 0:
             logger.info(
@@ -210,7 +225,9 @@ class AuditService:
         MUST be called during agent shutdown to guarantee all audit
         entries are persisted (compliance requirement).
         """
-        if self._flush_timer:
-            self._flush_timer.cancel()
+        self._stop_event.set()
+        self._flush_requested.set()
+        if self._flush_worker.is_alive():
+            self._flush_worker.join(timeout=5)
         self._flush()
         logger.info("AuditService shutdown complete — all entries flushed")

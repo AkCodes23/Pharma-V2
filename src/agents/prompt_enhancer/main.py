@@ -1,24 +1,17 @@
 """
-Pharma Agentic AI — Prompt Enhancer Agent.
-
-A2A sub-agent that improves failed prompts when a retriever agent's
-result quality score is below the threshold. Takes the original
-prompt + quality evaluation feedback and generates an improved prompt.
-
-Architecture context:
-  - Service: Prompt Enhancer (A2A sub-agent)
-  - Responsibility: Prompt refinement for retry attempts
-  - Upstream: Quality Evaluator (on quality failure)
-  - Downstream: Original Retriever Agent (re-dispatched task)
-  - LLM: Azure OpenAI GPT-4o for prompt improvement
-  - Failure: If enhancement fails, use original prompt for retry
+Prompt enhancer service.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
+
+import uvicorn
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
 from src.shared.config import get_settings
 
@@ -26,19 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class PromptEnhancer:
-    """
-    LLM-based prompt enhancer for failed retriever tasks.
-
-    When a retriever agent's result fails quality evaluation,
-    this agent analyzes the failure reasons and generates an
-    improved, more specific prompt for the retry attempt.
-
-    Strategies:
-      1. Add specificity: Narrow the search scope
-      2. Add constraints: Require specific citation types
-      3. Decompose: Break complex queries into simpler sub-queries
-      4. Rephrase: Fix ambiguous or vague language
-    """
+    """LLM-based prompt enhancer for failed retriever tasks."""
 
     ENHANCEMENT_PROMPT = """You are a pharmaceutical intelligence prompt engineer.
 A retriever agent produced low-quality results. Your task is to improve the original prompt
@@ -79,18 +60,6 @@ Respond in strict JSON:
         task_description: str,
         quality_evaluation: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        Generate an improved prompt for a failed retriever task.
-
-        Args:
-            query: Original user query.
-            pillar: Agent pillar type.
-            task_description: Original task description that failed.
-            quality_evaluation: Quality evaluation result.
-
-        Returns:
-            Dict with enhanced_description, strategy_used, and changes_made.
-        """
         try:
             from openai import AzureOpenAI
 
@@ -120,28 +89,47 @@ Respond in strict JSON:
             )
 
             result = json.loads(response.choices[0].message.content)
-
-            logger.info(
-                "Prompt enhanced",
-                extra={
-                    "pillar": pillar,
-                    "strategy": result.get("strategy_used", "unknown"),
-                    "changes": len(result.get("changes_made", [])),
-                },
-            )
-
             return {
                 "enhanced_description": result.get("enhanced_description", task_description),
                 "strategy_used": result.get("strategy_used", "unknown"),
                 "changes_made": result.get("changes_made", []),
                 "original_description": task_description,
             }
-
         except Exception:
-            logger.exception("Prompt enhancement failed — using original description")
+            logger.exception("Prompt enhancement failed; using original description")
             return {
                 "enhanced_description": task_description,
                 "strategy_used": "fallback",
                 "changes_made": [],
                 "original_description": task_description,
             }
+
+
+class EnhanceRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    pillar: str = Field(..., min_length=1)
+    task_description: str = Field(..., min_length=1)
+    quality_evaluation: dict[str, Any] = Field(default_factory=dict)
+
+
+app = FastAPI(title="Pharma Agentic AI - Prompt Enhancer", version="0.1.0")
+_enhancer = PromptEnhancer()
+
+
+@app.get("/health")
+async def health_check() -> dict[str, str]:
+    return {"status": "healthy", "service": "prompt-enhancer"}
+
+
+@app.post("/enhance")
+async def enhance(request: EnhanceRequest) -> dict[str, Any]:
+    return await _enhancer.enhance(
+        query=request.query,
+        pillar=request.pillar,
+        task_description=request.task_description,
+        quality_evaluation=request.quality_evaluation,
+    )
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")))

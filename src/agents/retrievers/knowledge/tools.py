@@ -15,6 +15,7 @@ Architecture context:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import hashlib
 import json
 import logging
@@ -30,6 +31,22 @@ logger = logging.getLogger(__name__)
 def _hash(data: str) -> str:
     """Compute SHA-256 hash for citation integrity."""
     return hashlib.sha256(data.encode()).hexdigest()
+
+
+def _run_async(coro: Any) -> Any:
+    """
+    Run an async coroutine from sync code safely.
+
+    Uses ``asyncio.run`` in normal sync contexts and falls back to
+    a one-off worker thread if already inside a running loop.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result(timeout=30)
 
 
 def hybrid_search(
@@ -60,28 +77,13 @@ def hybrid_search(
 
         retriever = get_rag_retriever()
 
-        # Run async retrieve in the event loop
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If called from within an async context, use run_coroutine_threadsafe
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                rag_context = pool.submit(
-                    asyncio.run,
-                    retriever.retrieve(
-                        query=query,
-                        pillar="KNOWLEDGE",
-                        top_k=top_k,
-                    ),
-                ).result(timeout=30)
-        else:
-            rag_context = loop.run_until_complete(
-                retriever.retrieve(
-                    query=query,
-                    pillar="KNOWLEDGE",
-                    top_k=top_k,
-                )
+        rag_context = _run_async(
+            retriever.retrieve(
+                query=query,
+                pillar="KNOWLEDGE",
+                top_k=top_k,
             )
+        )
 
         if rag_context.is_empty:
             logger.info("RAG search returned no results", extra={"query": query[:80]})

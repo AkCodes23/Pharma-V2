@@ -48,4 +48,7 @@ CMD ["uvicorn", "src.agents.executor.main:app", "--host", "0.0.0.0", "--port", "
 
 # ── Retriever Worker ──────────────────────────────────────
 FROM base AS retriever-worker
-CMD ["python", "-m", "src.agents.retrievers.worker"]
+ENV AGENT_MODULE=legal
+ENV PORT=8080
+EXPOSE 8080
+CMD ["/bin/sh", "-c", "python -m src.agents.retrievers.${AGENT_MODULE}.main"]

@@ -193,37 +193,37 @@ resource topics 'Microsoft.ServiceBus/namespaces/topics@2024-01-01' = [for name 
 resource legalSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
   parent: topics[0]
   name: 'retriever-legal-sub'
-  properties: { lockDuration: 'PT5M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
 }
 
 resource clinicalSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
   parent: topics[1]
   name: 'retriever-clinical-sub'
-  properties: { lockDuration: 'PT5M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
 }
 
 resource commercialSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
   parent: topics[2]
   name: 'retriever-commercial-sub'
-  properties: { lockDuration: 'PT5M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
 }
 
 resource socialSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
   parent: topics[3]
   name: 'retriever-social-sub'
-  properties: { lockDuration: 'PT5M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
 }
 
 resource knowledgeSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
   parent: topics[4]
   name: 'retriever-knowledge-sub'
-  properties: { lockDuration: 'PT5M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
 }
 
 resource newsSub 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
   parent: topics[5]
   name: 'retriever-news-sub'
-  properties: { lockDuration: 'PT5M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
+  properties: { lockDuration: 'PT1M'; maxDeliveryCount: 5; deadLetteringOnMessageExpiration: true }
 }
 
 // DLQ monitoring subscriptions — one per topic

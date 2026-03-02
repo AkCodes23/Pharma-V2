@@ -51,6 +51,11 @@ logger = logging.getLogger(__name__)
 # ── Config ───────────────────────────────────────────────
 PLANNER_URL = os.getenv("PLANNER_URL", "http://planner:8000")
 _API_KEY = os.getenv("PHARMA_INTERNAL_API_KEY", "")
+PLANNER_WS_URL = (
+    PLANNER_URL.replace("https://", "wss://")
+    .replace("http://", "ws://")
+    .rstrip("/")
+)
 
 # ── Shared HTTP client ────────────────────────────────────
 _http: httpx.AsyncClient | None = None
@@ -237,7 +242,7 @@ async def pharma_create_session(params: CreateSessionInput, ctx: Context) -> str
             "target_market": params.target_market,
             "estimated_completion_seconds": 60,
             "poll_with": "pharma_get_session",
-            "stream_events_at": f"ws://planner:8000/ws/{data.get('session_id')}",
+            "stream_events_at": f"{PLANNER_WS_URL}/ws/sessions/{data.get('session_id')}",
         }, indent=2)
     except Exception as e:
         return _err(e)
@@ -300,7 +305,7 @@ async def pharma_get_session(params: GetSessionInput, ctx: Context) -> str:
                     for r in data.get("agent_results", [])
                 },
             })
-        elif status == "RUNNING":
+        elif status in {"PLANNING", "RETRIEVING", "VALIDATING", "SYNTHESIZING"}:
             summary["completed_pillars"] = [
                 r.get("pillar") for r in data.get("agent_results", [])
             ]

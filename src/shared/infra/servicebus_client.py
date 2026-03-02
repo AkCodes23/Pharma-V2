@@ -251,7 +251,7 @@ class ServiceBusConsumer:
     def consume(
         self,
         handler: Callable[[ServiceBusMessage], None],
-        max_messages: int = 1,
+        max_messages: int = PREFETCH_COUNT,
         max_wait_time: int = 30,
     ) -> None:
         """

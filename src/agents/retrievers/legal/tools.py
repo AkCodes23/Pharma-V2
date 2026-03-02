@@ -14,6 +14,7 @@ Architecture context:
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = 30.0
 _IPO_TIMEOUT = 45.0  # IPO scraping needs more time
+_HTTP_CLIENT: httpx.Client | None = None
+_IPO_CLIENT: httpx.Client | None = None
 
 
 def _hash_response(data: str | bytes) -> str:
@@ -36,6 +39,37 @@ def _hash_response(data: str | bytes) -> str:
     if isinstance(data, str):
         data = data.encode("utf-8")
     return hashlib.sha256(data).hexdigest()
+
+
+def _get_http_client() -> httpx.Client:
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None:
+        _HTTP_CLIENT = httpx.Client(
+            timeout=_HTTP_TIMEOUT,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _HTTP_CLIENT
+
+
+def _get_ipo_client() -> httpx.Client:
+    global _IPO_CLIENT
+    if _IPO_CLIENT is None:
+        _IPO_CLIENT = httpx.Client(
+            timeout=_IPO_TIMEOUT,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _IPO_CLIENT
+
+
+def _close_clients() -> None:
+    if _HTTP_CLIENT is not None:
+        _HTTP_CLIENT.close()
+    if _IPO_CLIENT is not None:
+        _IPO_CLIENT.close()
+
+
+atexit.register(_close_clients)
 
 
 # ── USPTO Orange Book ──────────────────────────────────────
@@ -72,9 +106,9 @@ def search_orange_book(
         "limit": 10,
     }
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.get(base_url, params=params)
-        response.raise_for_status()
+    client = _get_http_client()
+    response = client.get(base_url, params=params)
+    response.raise_for_status()
 
     raw_text = response.text
     data = response.json()
@@ -135,9 +169,9 @@ def search_patent_exclusivity(
         "limit": 5,
     }
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        response = client.get(base_url, params=params)
-        response.raise_for_status()
+    client = _get_http_client()
+    response = client.get(base_url, params=params)
+    response.raise_for_status()
 
     raw_text = response.text
     data = response.json()
@@ -194,28 +228,28 @@ def search_ipo_patents(
     patents: list[dict[str, Any]] = []
 
     try:
-        with httpx.Client(timeout=_IPO_TIMEOUT, follow_redirects=True) as client:
-            # Step 1: Get session cookies from the search page
-            session_resp = client.get(
-                "https://ipindiaservices.gov.in/PatentSearch/PatentSearch/SearchByKeyword"
-            )
-            session_resp.raise_for_status()
+        client = _get_ipo_client()
+        # Step 1: Get session cookies from the search page
+        session_resp = client.get(
+            "https://ipindiaservices.gov.in/PatentSearch/PatentSearch/SearchByKeyword"
+        )
+        session_resp.raise_for_status()
 
-            # Step 2: Submit keyword search form
-            form_data = {
-                "KeyWord": ingredient,
-                "SearchType": "Keyword",
-            }
-            headers = {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer": "https://ipindiaservices.gov.in/PatentSearch/",
-            }
+        # Step 2: Submit keyword search form
+        form_data = {
+            "KeyWord": ingredient,
+            "SearchType": "Keyword",
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": "https://ipindiaservices.gov.in/PatentSearch/",
+        }
 
-            search_resp = client.post(search_url, data=form_data, headers=headers)
-            search_resp.raise_for_status()
+        search_resp = client.post(search_url, data=form_data, headers=headers)
+        search_resp.raise_for_status()
 
-            # Step 3: Parse HTML response for patent table rows
-            patents = _parse_ipo_html(search_resp.text, ingredient, market)
+        # Step 3: Parse HTML response for patent table rows
+        patents = _parse_ipo_html(search_resp.text, ingredient, market)
 
         source_url = f"https://ipindiaservices.gov.in/PatentSearch/PatentSearch/SearchByKeyword?q={ingredient}"
         raw_json = json.dumps(patents, default=str)

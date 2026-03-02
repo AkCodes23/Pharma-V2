@@ -22,7 +22,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -35,8 +35,13 @@ from src.shared.infra.rate_limit import rate_limiter
 from src.shared.infra.redis_client import RedisClient
 from src.shared.infra.servicebus_client import ServiceBusPublisher
 from src.shared.infra.telemetry import instrument_fastapi, setup_telemetry
-from src.shared.infra.websocket import websocket_endpoint
+from src.shared.infra.websocket import (
+    start_websocket_manager,
+    stop_websocket_manager,
+    websocket_endpoint,
+)
 from src.shared.models.enums import AgentType, AuditAction
+from src.shared.models.schemas import Session
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +50,13 @@ _cosmos: CosmosDBClient | None = None
 _publisher: TaskPublisher | None = None
 _decomposer: IntentDecomposer | None = None
 _redis: RedisClient | None = None
+_audit: AuditService | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle: initialize and cleanup resources."""
-    global _cosmos, _publisher, _decomposer, _redis
+    global _cosmos, _publisher, _decomposer, _redis, _audit
 
     # Bootstrap: Key Vault → config → telemetry (ordered)
     from src.shared.bootstrap import bootstrap_agent
@@ -61,15 +67,20 @@ async def lifespan(app: FastAPI):
     _cosmos.ensure_containers()
     _redis = RedisClient()
     servicebus = ServiceBusPublisher()
-    audit = AuditService(_cosmos)
-    _publisher = TaskPublisher(_cosmos, servicebus, audit)
+    _audit = AuditService(_cosmos)
+    _publisher = TaskPublisher(_cosmos, servicebus, _audit)
     _decomposer = IntentDecomposer()
+    await start_websocket_manager()
 
     logger.info("Planner Agent started")
     yield
 
     # Cleanup
-    _decomposer.close()
+    await stop_websocket_manager()
+    if _decomposer:
+        _decomposer.close()
+    if _audit:
+        _audit.shutdown()
     servicebus.close()
     _redis.close()
     logger.info("Planner Agent stopped")
@@ -135,6 +146,8 @@ class SessionStatusResponse(BaseModel):
 
     session_id: str
     status: str
+    drug_name: str | None = None
+    target_market: str | None = None
     query: str
     task_graph: list[TaskNodeResponse]
     agent_results: list[dict[str, Any]]
@@ -157,7 +170,7 @@ async def create_session(request: CreateSessionRequest, req: Request) -> CreateS
     Decomposes the query into a task graph and publishes
     sub-tasks to Azure Service Bus for parallel execution.
     """
-    if not _decomposer or not _publisher or not _cosmos:
+    if not _decomposer or not _publisher or not _cosmos or not _audit:
         raise HTTPException(status_code=503, detail="Service not ready")
 
     session_id = str(uuid4())
@@ -181,8 +194,7 @@ async def create_session(request: CreateSessionRequest, req: Request) -> CreateS
         )
 
         # 3. Audit the query submission
-        audit = AuditService(_cosmos)
-        audit.log(
+        _audit.log(
             session_id=session_id,
             user_id=request.user_id,
             agent_type=AgentType.PLANNER,
@@ -222,10 +234,19 @@ async def get_session(session_id: str) -> SessionStatusResponse:
         raise HTTPException(status_code=503, detail="Service not ready")
 
     try:
-        session = _cosmos.get_session(session_id)
+        cache = get_session_cache()
+        cached = cache.get_cached_session(session_id)
+        if cached is not None:
+            session = Session.model_validate(cached)
+        else:
+            session = _cosmos.get_session(session_id)
+            cache.cache_session(session_id, session.model_dump(mode="json"))
+
         return SessionStatusResponse(
             session_id=session.id,
             status=session.status.value,
+            drug_name=session.parameters.drug_name,
+            target_market=session.parameters.target_market,
             query=session.query,
             task_graph=[
                 TaskNodeResponse(
@@ -247,6 +268,149 @@ async def get_session(session_id: str) -> SessionStatusResponse:
     except Exception as e:
         logger.exception("Failed to get session", extra={"session_id": session_id})
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from e
+
+
+@app.get("/api/v1/sessions")
+async def list_sessions(
+    drug_name: str = Query(default=""),
+    user_id: str = Query(default=""),
+    status: str = Query(default=""),
+    limit: int = Query(default=10, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """List sessions with optional filters and pagination."""
+    if not _cosmos:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    sessions, total = _cosmos.list_sessions(
+        drug_name=drug_name,
+        user_id=user_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "sessions": [
+            {
+                "session_id": s.id,
+                "drug_name": s.parameters.drug_name,
+                "target_market": s.parameters.target_market,
+                "status": s.status.value,
+                "decision": s.decision.value if s.decision else None,
+                "created_at": s.created_at.isoformat(),
+                "updated_at": s.updated_at.isoformat(),
+            }
+            for s in sessions
+        ],
+    }
+
+
+@app.get("/api/v1/sessions/{session_id}/report")
+async def get_session_report(
+    session_id: str,
+    format: str = Query(default="pdf"),
+) -> dict[str, Any]:
+    """Fetch report payload or URL for a completed session."""
+    if not _cosmos:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    session = _cosmos.get_session(session_id)
+    requested_format = format.lower()
+
+    if requested_format == "pdf":
+        if not session.report_url:
+            raise HTTPException(status_code=404, detail="Report not generated yet")
+        return {
+            "session_id": session.id,
+            "report_url": session.report_url,
+            "generated_at": session.completed_at.isoformat() if session.completed_at else None,
+            "file_size_kb": None,
+        }
+
+    if requested_format == "summary":
+        return {
+            "session_id": session.id,
+            "query": session.query,
+            "decision": session.decision.value if session.decision else None,
+            "decision_rationale": session.decision_rationale,
+            "grounding_score": session.validation.grounding_score if session.validation else None,
+            "conflict_count": len(session.validation.conflicts) if session.validation else 0,
+            "report_url": session.report_url,
+        }
+
+    if requested_format == "json":
+        return {
+            "session_id": session.id,
+            "query": session.query,
+            "status": session.status.value,
+            "decision": session.decision.value if session.decision else None,
+            "decision_rationale": session.decision_rationale,
+            "validation": session.validation.model_dump() if session.validation else None,
+            "agent_results": [r.model_dump() for r in session.agent_results],
+            "report_url": session.report_url,
+        }
+
+    raise HTTPException(status_code=400, detail="format must be one of: pdf, json, summary")
+
+
+@app.get("/audit")
+async def list_audit(
+    limit: int = Query(default=100, ge=1, le=500),
+    session_id: str = Query(default=""),
+) -> dict[str, Any]:
+    """List recent audit entries for admin UI / diagnostics."""
+    if not _cosmos:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    entries = _cosmos.list_audit_entries(limit=limit, session_id=session_id)
+    return {"entries": [entry.model_dump(mode="json") for entry in entries]}
+
+
+@app.get("/metrics/agents")
+async def get_agent_metrics() -> dict[str, Any]:
+    """Compute lightweight agent metrics from recent sessions."""
+    if not _cosmos:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    sessions, _ = _cosmos.list_sessions(limit=200, offset=0)
+    aggregates: dict[str, dict[str, float | int]] = {}
+
+    for session in sessions:
+        for result in session.agent_results:
+            agent = result.agent_type.value
+            bucket = aggregates.setdefault(
+                agent,
+                {"total_latency_ms": 0, "total_invocations": 0, "success_count": 0},
+            )
+            bucket["total_latency_ms"] += int(result.execution_time_ms)
+            bucket["total_invocations"] += 1
+
+            has_error = any(k.endswith("_error") for k in result.findings.keys())
+            if not has_error:
+                bucket["success_count"] += 1
+
+    metrics = []
+    for agent, bucket in aggregates.items():
+        total_invocations = int(bucket["total_invocations"])
+        if total_invocations == 0:
+            continue
+        avg_latency = int(bucket["total_latency_ms"]) / total_invocations
+        success_rate = (int(bucket["success_count"]) / total_invocations) * 100
+        metrics.append(
+            {
+                "agent": agent,
+                "avg_latency_ms": round(avg_latency, 2),
+                "success_rate": round(success_rate, 2),
+                "total_invocations": total_invocations,
+            }
+        )
+
+    metrics.sort(key=lambda m: m["agent"])
+    return {"metrics": metrics}
 
 
 @app.get("/health")

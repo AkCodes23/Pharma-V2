@@ -1,24 +1,17 @@
 """
-Pharma Agentic AI — Quality Evaluator Agent.
-
-A2A sub-agent that evaluates the quality of retriever agent results
-before they reach the Supervisor. Scores factual accuracy, citation
-completeness, and relevance using an LLM-based rubric.
-
-Architecture context:
-  - Service: Quality Evaluator (A2A sub-agent)
-  - Responsibility: Pre-validation quality scoring
-  - Upstream: Retriever agents (via A2A DELEGATE)
-  - Downstream: Supervisor Agent (if quality passes), Prompt Enhancer (if fails)
-  - LLM: Azure OpenAI GPT-4o for evaluation
-  - Failure: If scoring fails, pass the result through unscored
+Quality evaluator service.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
+
+import uvicorn
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
 from src.shared.config import get_settings
 
@@ -26,19 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class QualityEvaluator:
-    """
-    LLM-based quality evaluator for agent results.
-
-    Scoring dimensions:
-      1. Factual accuracy (0-1): Are claims supported by citations?
-      2. Citation completeness (0-1): Are all data points cited?
-      3. Relevance (0-1): Is the result relevant to the query?
-
-    Overall score = weighted average (accuracy: 0.5, citation: 0.3, relevance: 0.2)
-
-    If overall score < 0.6, the result is rejected and sent to
-    the Prompt Enhancer for re-prompting.
-    """
+    """LLM-based quality evaluator for agent results."""
 
     QUALITY_THRESHOLD = 0.6
 
@@ -67,24 +48,7 @@ Respond in strict JSON:
     def __init__(self) -> None:
         self._settings = get_settings()
 
-    async def evaluate(
-        self,
-        query: str,
-        pillar: str,
-        result: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Evaluate an agent result's quality.
-
-        Args:
-            query: Original user query.
-            pillar: Agent pillar type.
-            result: Agent result dict (findings + citations).
-
-        Returns:
-            Evaluation dict with scores, overall_score, pass/fail,
-            issues, and suggestions.
-        """
+    async def evaluate(self, query: str, pillar: str, result: dict[str, Any]) -> dict[str, Any]:
         try:
             from openai import AzureOpenAI
 
@@ -109,15 +73,13 @@ Respond in strict JSON:
             )
 
             scores = json.loads(response.choices[0].message.content)
-
-            # Compute weighted overall score
             overall = (
                 scores.get("factual_accuracy", 0.0) * 0.5
                 + scores.get("citation_completeness", 0.0) * 0.3
                 + scores.get("relevance", 0.0) * 0.2
             )
 
-            evaluation = {
+            return {
                 "factual_accuracy": scores.get("factual_accuracy", 0.0),
                 "citation_completeness": scores.get("citation_completeness", 0.0),
                 "relevance": scores.get("relevance", 0.0),
@@ -127,25 +89,42 @@ Respond in strict JSON:
                 "suggestions": scores.get("suggestions", []),
             }
 
-            logger.info(
-                "Quality evaluation complete",
-                extra={
-                    "pillar": pillar,
-                    "overall_score": overall,
-                    "passed": evaluation["passed"],
-                },
-            )
-
-            return evaluation
-
         except Exception:
-            logger.exception("Quality evaluation failed — passing result through")
+            logger.exception("Quality evaluation failed; passing result through")
             return {
                 "factual_accuracy": None,
                 "citation_completeness": None,
                 "relevance": None,
                 "overall_score": None,
-                "passed": True,  # Fail-open: don't block pipeline on evaluator failure
+                "passed": True,
                 "issues": ["Quality evaluation unavailable"],
                 "suggestions": [],
             }
+
+
+class EvaluateRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    pillar: str = Field(..., min_length=1)
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+app = FastAPI(title="Pharma Agentic AI - Quality Evaluator", version="0.1.0")
+_evaluator = QualityEvaluator()
+
+
+@app.get("/health")
+async def health_check() -> dict[str, str]:
+    return {"status": "healthy", "service": "quality-evaluator"}
+
+
+@app.post("/evaluate")
+async def evaluate(request: EvaluateRequest) -> dict[str, Any]:
+    return await _evaluator.evaluate(
+        query=request.query,
+        pillar=request.pillar,
+        result=request.result,
+    )
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")))

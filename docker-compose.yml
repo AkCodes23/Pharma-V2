@@ -271,6 +271,7 @@ services:
     environment:
       - SERVICE_NAME=supervisor-agent
       - AGENT_ROLE=supervisor
+      - PORT=8001
 
   executor:
     <<: *python-service
@@ -286,6 +287,7 @@ services:
     environment:
       - SERVICE_NAME=executor-agent
       - AGENT_ROLE=executor
+      - PORT=8002
 
   retriever-legal:
     <<: *python-service
@@ -294,6 +296,8 @@ services:
     environment:
       - SERVICE_NAME=retriever-legal
       - AGENT_MODULE=legal
+      - PORT=8080
+      - SERVICE_BUS_SUBSCRIPTION=retriever-legal-sub
 
   retriever-clinical:
     <<: *python-service
@@ -302,6 +306,8 @@ services:
     environment:
       - SERVICE_NAME=retriever-clinical
       - AGENT_MODULE=clinical
+      - PORT=8080
+      - SERVICE_BUS_SUBSCRIPTION=retriever-clinical-sub
 
   retriever-commercial:
     <<: *python-service
@@ -310,6 +316,8 @@ services:
     environment:
       - SERVICE_NAME=retriever-commercial
       - AGENT_MODULE=commercial
+      - PORT=8080
+      - SERVICE_BUS_SUBSCRIPTION=retriever-commercial-sub
 
   retriever-social:
     <<: *python-service
@@ -318,6 +326,8 @@ services:
     environment:
       - SERVICE_NAME=retriever-social
       - AGENT_MODULE=social
+      - PORT=8080
+      - SERVICE_BUS_SUBSCRIPTION=retriever-social-sub
 
   retriever-knowledge:
     <<: *python-service
@@ -326,6 +336,8 @@ services:
     environment:
       - SERVICE_NAME=retriever-knowledge
       - AGENT_MODULE=knowledge
+      - PORT=8080
+      - SERVICE_BUS_SUBSCRIPTION=retriever-knowledge-sub
 
   retriever-news:
     <<: *python-service
@@ -334,6 +346,8 @@ services:
     environment:
       - SERVICE_NAME=retriever-news
       - AGENT_MODULE=news
+      - PORT=8080
+      - SERVICE_BUS_SUBSCRIPTION=retriever-news-sub
 
   pharma-mcp:
     <<: *python-service
@@ -347,7 +361,7 @@ services:
       - PLANNER_URL=http://planner:8000
       - PHARMA_INTERNAL_API_KEY=${PHARMA_INTERNAL_API_KEY:-dev-internal-key}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8010/health || exit 1"]
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 8010), 2); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -389,6 +403,7 @@ services:
     environment:
       - SERVICE_NAME=quality-evaluator
       - AGENT_ROLE=quality_evaluator
+      - PORT=8080
 
   prompt-enhancer:
     <<: *python-service
@@ -397,6 +412,7 @@ services:
     environment:
       - SERVICE_NAME=prompt-enhancer
       - AGENT_ROLE=prompt_enhancer
+      - PORT=8080
 
   # ── Frontend ─────────────────────────────────────────────
 

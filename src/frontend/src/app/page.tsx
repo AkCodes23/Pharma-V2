@@ -183,7 +183,7 @@ export default function Dashboard() {
       } catch {
         // Silently retry on poll failure
       }
-    }, 2000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [polling, sessionId]);

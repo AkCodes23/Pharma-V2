@@ -13,7 +13,8 @@ from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
 
 from src.agents.retrievers.base_retriever import BaseRetriever
-from src.agents.retrievers.clinical.tools import search_cdsco, search_clinical_trials
+from src.agents.retrievers.runtime import create_retriever_app, run_retriever_service
+from src.agents.retrievers.clinical.tools import search_cdsco_drugs, search_clinical_trials
 
 if TYPE_CHECKING:
     from src.shared.infra.audit import AuditService
@@ -59,8 +60,7 @@ class ClinicalRetriever(BaseRetriever):
         # 1. Search ClinicalTrials.gov for active trials
         try:
             trials, ct_citation = search_clinical_trials(
-                intervention=drug_name,
-                condition=therapeutic_area or None,
+                drug_name=drug_name,
                 status="RECRUITING",
             )
             findings["active_trials"] = trials
@@ -72,10 +72,12 @@ class ClinicalRetriever(BaseRetriever):
         # 2. Search for Phase III specifically
         try:
             phase3, p3_citation = search_clinical_trials(
-                intervention=drug_name,
-                phase="PHASE3",
+                drug_name=drug_name,
+                status="RECRUITING",
             )
-            findings["phase3_trials"] = phase3
+            findings["phase3_trials"] = [
+                t for t in phase3 if "PHASE3" in str(t.get("phase", "")).upper()
+            ]
             citations.append(p3_citation)
         except Exception as e:
             findings["phase3_error"] = str(e)
@@ -83,7 +85,7 @@ class ClinicalRetriever(BaseRetriever):
         # 3. CDSCO search if India market
         if target_market.lower() in ("india", "in"):
             try:
-                cdsco_data, cdsco_citation = search_cdsco(drug_name, target_market)
+                cdsco_data, cdsco_citation = search_cdsco_drugs(drug_name, target_market)
                 findings["cdsco_applications"] = cdsco_data
                 citations.append(cdsco_citation)
             except Exception as e:
@@ -99,3 +101,14 @@ class ClinicalRetriever(BaseRetriever):
             findings["competitive_saturation"] = "LOW"
 
         return findings, citations
+
+
+app = create_retriever_app(
+    ClinicalRetriever,
+    agent_name="retriever-clinical",
+    default_subscription="retriever-clinical-sub",
+)
+
+
+if __name__ == "__main__":
+    run_retriever_service(app)

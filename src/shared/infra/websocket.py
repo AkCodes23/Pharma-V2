@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 REPLAY_BUFFER_SIZE = 20
 # Seconds of silence before a client is considered stale
 HEARTBEAT_TIMEOUT_SECONDS = 60.0
+REDIS_POLL_TIMEOUT_SECONDS = 1.0
+STALE_CLEANUP_INTERVAL_SECONDS = 15.0
 
 
 class PushManager(Protocol):
@@ -69,6 +71,9 @@ class ConnectionManager:
         self._replay_buffers: dict[str, deque[str]] = {}
         self._lock = asyncio.Lock()
         self._pubsub_task: asyncio.Task | None = None
+        self._stale_cleanup_task: asyncio.Task | None = None
+        self._redis_client: Any | None = None
+        self._pubsub: Any | None = None
 
     async def start_redis_subscriber(self) -> None:
         """
@@ -76,19 +81,34 @@ class ConnectionManager:
 
         Pattern: pharma:ws:* — matches all session channels.
         """
+        if self._pubsub_task and not self._pubsub_task.done():
+            return
+
         try:
             from src.shared.infra.redis_client import RedisClient
-            redis_client = RedisClient()
-            pubsub = redis_client.client.pubsub()
-            pubsub.psubscribe("pharma:ws:*")
+
+            self._redis_client = RedisClient()
+            self._pubsub = self._redis_client.client.pubsub()
+            self._pubsub.psubscribe("pharma:ws:*")
 
             async def _poll_loop() -> None:
-                loop = asyncio.get_event_loop()
-                while True:
-                    msg = await loop.run_in_executor(
-                        None, lambda: pubsub.get_message(ignore_subscribe_messages=True, timeout=0.01)
-                    )
-                    if msg and msg.get("type") == "pmessage":
+                loop = asyncio.get_running_loop()
+                try:
+                    while True:
+                        pubsub = self._pubsub
+                        if pubsub is None:
+                            break
+
+                        msg = await loop.run_in_executor(
+                            None,
+                            lambda: pubsub.get_message(
+                                ignore_subscribe_messages=True,
+                                timeout=REDIS_POLL_TIMEOUT_SECONDS,
+                            ),
+                        )
+                        if not msg or msg.get("type") != "pmessage":
+                            continue
+
                         channel = msg["channel"]
                         if isinstance(channel, bytes):
                             channel = channel.decode()
@@ -97,14 +117,81 @@ class ConnectionManager:
                         if isinstance(data, bytes):
                             data = data.decode()
                         await self.broadcast_raw(session_id, data)
-                    else:
-                        await asyncio.sleep(0.01)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Redis WebSocket subscriber loop failed")
 
             self._pubsub_task = asyncio.create_task(_poll_loop())
             logger.info("Redis Pub/Sub subscriber started for WS streaming")
 
         except Exception:
             logger.warning("Redis Pub/Sub subscriber failed to start — streaming disabled")
+
+    async def stop_redis_subscriber(self) -> None:
+        """Stop Redis Pub/Sub background processing and close connections."""
+        if self._pubsub_task:
+            self._pubsub_task.cancel()
+            try:
+                await self._pubsub_task
+            except asyncio.CancelledError:
+                pass
+            self._pubsub_task = None
+
+        if self._pubsub is not None:
+            try:
+                self._pubsub.close()
+            except Exception:
+                logger.debug("Failed to close Redis pubsub", exc_info=True)
+            self._pubsub = None
+
+        if self._redis_client is not None:
+            try:
+                self._redis_client.close()
+            except Exception:
+                logger.debug("Failed to close Redis client", exc_info=True)
+            self._redis_client = None
+
+    async def start_stale_cleanup_loop(self) -> None:
+        """Start periodic stale WebSocket connection cleanup."""
+        if self._stale_cleanup_task and not self._stale_cleanup_task.done():
+            return
+
+        async def _cleanup_loop() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(STALE_CLEANUP_INTERVAL_SECONDS)
+                    await self.cleanup_stale_connections()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Stale WebSocket cleanup loop failed")
+
+        self._stale_cleanup_task = asyncio.create_task(_cleanup_loop())
+        logger.info(
+            "WebSocket stale-connection cleanup loop started",
+            extra={"interval_s": STALE_CLEANUP_INTERVAL_SECONDS},
+        )
+
+    async def stop_stale_cleanup_loop(self) -> None:
+        """Stop periodic stale WebSocket connection cleanup."""
+        if self._stale_cleanup_task:
+            self._stale_cleanup_task.cancel()
+            try:
+                await self._stale_cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._stale_cleanup_task = None
+
+    async def start_background_tasks(self) -> None:
+        """Start all local WebSocket background tasks."""
+        await self.start_redis_subscriber()
+        await self.start_stale_cleanup_loop()
+
+    async def stop_background_tasks(self) -> None:
+        """Stop all local WebSocket background tasks."""
+        await self.stop_stale_cleanup_loop()
+        await self.stop_redis_subscriber()
 
     async def broadcast_raw(self, session_id: str, raw_message: str) -> None:
         """Broadcast a pre-serialized message to all clients watching a session."""
@@ -309,6 +396,14 @@ class WebPubSubManager:
         """No-op — PubSub handles disconnection lifecycle."""
         pass
 
+    async def start_background_tasks(self) -> None:
+        """No-op for Azure Web PubSub mode."""
+        return
+
+    async def stop_background_tasks(self) -> None:
+        """No-op for Azure Web PubSub mode."""
+        return
+
     def get_client_token(self, session_id: str, user_id: str = "") -> dict[str, str]:
         """
         Generate a client access token for WebSocket connection.
@@ -353,6 +448,16 @@ def _create_push_manager() -> ConnectionManager | WebPubSubManager:
 ws_manager = _create_push_manager()
 
 
+async def start_websocket_manager() -> None:
+    """Start WS manager background tasks (if any)."""
+    await ws_manager.start_background_tasks()
+
+
+async def stop_websocket_manager() -> None:
+    """Stop WS manager background tasks (if any)."""
+    await ws_manager.stop_background_tasks()
+
+
 async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
     """
     WebSocket endpoint handler for real-time session updates (local mode).
@@ -381,7 +486,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
             data = await websocket.receive_text()
             # Update last-ping timestamp for heartbeat tracking
             if isinstance(ws_manager, ConnectionManager):
-                ws_manager._last_ping[websocket] = time.monotonic()
+                async with ws_manager._lock:
+                    ws_manager._last_ping[websocket] = time.monotonic()
             # Echo back as heartbeat acknowledgment
             if data == "ping":
                 await websocket.send_text(json.dumps({"event": "pong"}))

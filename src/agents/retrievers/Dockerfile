@@ -20,6 +20,6 @@ ARG AGENT_MODULE
 ENV AGENT_MODULE=${AGENT_MODULE}
 
 USER appuser
-EXPOSE 8001
+EXPOSE 8080
 
 CMD python -m src.agents.retrievers.${AGENT_MODULE}.main

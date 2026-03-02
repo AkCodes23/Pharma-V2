@@ -14,6 +14,7 @@ Architecture context:
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -27,6 +28,7 @@ from src.shared.models.schemas import Citation
 
 logger = logging.getLogger(__name__)
 _HTTP_TIMEOUT = 30.0
+_EDGAR_CLIENT: httpx.Client | None = None
 
 # SEC EDGAR requires a user-agent header with contact info
 _EDGAR_HEADERS = {
@@ -38,6 +40,25 @@ _EDGAR_HEADERS = {
 def _hash(data: str) -> str:
     """Compute SHA-256 hash for citation integrity."""
     return hashlib.sha256(data.encode()).hexdigest()
+
+
+def _get_edgar_client() -> httpx.Client:
+    global _EDGAR_CLIENT
+    if _EDGAR_CLIENT is None:
+        _EDGAR_CLIENT = httpx.Client(
+            timeout=_HTTP_TIMEOUT,
+            headers=_EDGAR_HEADERS,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _EDGAR_CLIENT
+
+
+def _close_clients() -> None:
+    if _EDGAR_CLIENT is not None:
+        _EDGAR_CLIENT.close()
+
+
+atexit.register(_close_clients)
 
 
 # ── SEC EDGAR — Company Filings & Revenue ──────────────────
@@ -232,9 +253,9 @@ def _search_edgar_company(drug_name: str) -> dict[str, Any]:
             "forms": "10-K,10-Q,8-K",
         }
 
-        with httpx.Client(timeout=_HTTP_TIMEOUT, headers=_EDGAR_HEADERS) as client:
-            resp = client.get(url, params=params)
-            resp.raise_for_status()
+        client = _get_edgar_client()
+        resp = client.get(url, params=params)
+        resp.raise_for_status()
 
         data = resp.json()
         hits = data.get("hits", {}).get("hits", [])

@@ -12,6 +12,7 @@ from src.shared.models.enums import AgentType, PillarType
 from src.shared.models.schemas import Citation, TaskNode
 
 from src.agents.retrievers.base_retriever import BaseRetriever
+from src.agents.retrievers.runtime import create_retriever_app, run_retriever_service
 from src.agents.retrievers.knowledge.tools import hybrid_search
 
 if TYPE_CHECKING:
@@ -60,3 +61,14 @@ class KnowledgeRetriever(BaseRetriever):
             findings["search_error"] = str(e)
 
         return findings, citations
+
+
+app = create_retriever_app(
+    KnowledgeRetriever,
+    agent_name="retriever-knowledge",
+    default_subscription="retriever-knowledge-sub",
+)
+
+
+if __name__ == "__main__":
+    run_retriever_service(app)
