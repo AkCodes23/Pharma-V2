@@ -1,164 +1,186 @@
-# Pharma Agentic AI — Claude Code Instructions
+# Pharma Agentic AI - Claude Code Instructions
 
-## Project Overview
+This file defines practical, code-aligned guidance for contributors and AI-assisted development workflows.
 
-Distributed, multi-agent pharmaceutical intelligence platform. Converts natural-language drug queries (e.g., "Should I launch generic Keytruda in India?") into citation-grounded, hallucination-free GO/NO-GO decision reports.
+## 1. Purpose
 
-**Architecture**: Planner → Service Bus/Kafka → 6 Retriever Agents (Legal, Clinical, Commercial, Social, Knowledge/RAG, News) → Quality Evaluator + Prompt Enhancer → Supervisor (Grounding Validator) → Executor (Report + PDF + Charts) → SPAR Reflection
+Use this document when you are:
+- adding or modifying service behavior
+- changing message contracts or infrastructure mappings
+- debugging startup/runtime issues
+- preparing a demo or release
 
-## Tech Stack
+Primary goal: keep code, runtime contracts, and docs synchronized.
 
-| Layer | Technology |
-|-------|-----------|
-| **Backend** | Python 3.12, FastAPI, Pydantic v2, Pydantic-Settings |
-| **LLM** | Azure OpenAI GPT-4o (Strict JSON Mode) |
-| **Messaging** | Azure Service Bus (prod), Kafka (dev via docker-compose) |
-| **Session Store** | Azure Cosmos DB (source of truth) |
-| **Graph** | Neo4j (dev), Azure Cosmos Gremlin (prod) |
-| **NER** | Azure AI Language Text Analytics + regex fallback |
-| **Real-time** | Azure Web PubSub (prod), local WebSocket (dev) |
-| **Analytics DB** | PostgreSQL 16 (dual-write from Cosmos) |
-| **Cache** | Redis 7 (session cache, rate limiter, circuit breaker) |
-| **Task Queue** | Celery 5 (Redis broker, Postgres backend) |
-| **RAG** | ChromaDB (dev), Azure AI Search (prod) |
-| **IaC** | Azure Bicep (12+ resources) |
-| **Frontend** | Next.js 15, React 19, TypeScript |
-| **Observability** | OpenTelemetry + structlog + Azure Monitor |
-| **ML** | DPO training (HuggingFace TRL / Azure fine-tune) |
-| **PDF** | WeasyPrint, Matplotlib, Plotly |
+## 2. Current Runtime Architecture
 
-## Directory Structure
+Main execution chain:
+1. Planner API receives query and creates session.
+2. Planner decomposes query into tasks and publishes one task per pillar.
+3. Retriever services consume pillar messages from Service Bus subscriptions.
+4. Retrievers persist findings and citations to Cosmos session state.
+5. Supervisor validates grounding and conflict state.
+6. Executor synthesizes final report and completes session.
 
+Supporting services:
+- Quality Evaluator (`/evaluate`)
+- Prompt Enhancer (`/enhance`)
+- MCP server for tool-based integrations
+
+## 3. Source of Truth Contracts
+
+### 3.1 API Endpoints
+
+Planner (`src/agents/planner/main.py`):
+- `POST /api/v1/sessions`
+- `GET /api/v1/sessions/{session_id}`
+- `GET /api/v1/sessions`
+- `GET /api/v1/sessions/{session_id}/report`
+- `GET /audit`
+- `GET /metrics/agents`
+- `GET /health`
+- `WS /ws/sessions/{session_id}`
+
+Supervisor (`src/agents/supervisor/main.py`):
+- `POST /api/v1/sessions/{session_id}/validate`
+- `GET /health`
+
+Executor (`src/agents/executor/main.py`):
+- `POST /api/v1/sessions/{session_id}/execute`
+- `GET /health`
+
+Retriever services (`src/agents/retrievers/*/main.py`):
+- `GET /health`
+- background consumer loop started by lifespan runtime wrapper
+
+### 3.2 Topic and Subscription Naming
+
+Service Bus topic naming convention (authoritative):
+- `legal-tasks`
+- `clinical-tasks`
+- `commercial-tasks`
+- `social-tasks`
+- `knowledge-tasks`
+- `news-tasks`
+
+Retriever subscriptions:
+- `retriever-legal-sub`
+- `retriever-clinical-sub`
+- `retriever-commercial-sub`
+- `retriever-social-sub`
+- `retriever-knowledge-sub`
+- `retriever-news-sub`
+
+DLQ monitor subscriptions:
+- `retriever-legal-dlq-sub`
+- `retriever-clinical-dlq-sub`
+- `retriever-commercial-dlq-sub`
+- `retriever-social-dlq-sub`
+- `retriever-knowledge-dlq-sub`
+- `retriever-news-dlq-sub`
+
+Compatibility note:
+- legacy `pharma.tasks.*` aliases may exist in compatibility code paths, but do not change source-of-truth naming without coordinated migration.
+
+## 4. Service Startup and Container Rules
+
+- Planner, Supervisor, Executor are FastAPI services.
+- Retrievers are also FastAPI services and host a background worker thread.
+- Health probes must target each service's actual port.
+- Compose/runtime must set explicit `PORT` values where image healthcheck references it.
+- Retrievers should set explicit `SERVICE_BUS_SUBSCRIPTION` env vars.
+
+## 5. Configuration and Secrets
+
+Typed settings live in `src/shared/config.py`.
+
+High-impact config groups:
+- `openai`
+- `cosmos`
+- `servicebus`
+- `redis`
+- `postgres`
+- `kafka`
+- `web_pubsub`
+- `telemetry`
+
+Secret strategy:
+- local: `.env` / `.env.example`
+- production: Key Vault + bootstrap resolution
+
+Do not hardcode credentials in source or docs.
+
+## 6. Data and State Ownership
+
+- Cosmos session documents are source of truth for workflow state.
+- Redis is cache and ephemeral coordination, not authoritative session storage.
+- Postgres is used for analytics/background task data.
+
+## 7. Reliability and Performance Patterns
+
+- Base retriever includes timeout and circuit breaker behavior.
+- Service Bus consumer uses prefetch and batched receive behavior.
+- Planner session reads should use cache read-through strategy.
+- Websocket manager runs background tasks for Redis fan-out and stale cleanup.
+- Audit service runs background flush worker and supports batched persistence.
+
+## 8. Development Workflow
+
+1. Read impacted contracts before coding.
+2. Implement minimal coherent change.
+3. Update docs in same change set.
+4. Compile/check touched modules.
+5. Run tests available in environment.
+6. Report residual risk and environment blockers explicitly.
+
+## 9. Validation Commands
+
+Compile selected modules:
+
+```powershell
+python -m py_compile src/agents/planner/main.py src/shared/infra/websocket.py
 ```
-src/
-├── agents/
-│   ├── planner/          # FastAPI :8000 — query decomposition + task publishing
-│   │   ├── main.py       # Endpoints: POST /analyze, GET /sessions/{id}
-│   │   ├── decomposer.py # IntentDecomposer — LLM strict JSON task graph
-│   │   └── publisher.py  # TaskPublisher — Service Bus / Kafka dispatch
-│   ├── retrievers/
-│   │   ├── base_retriever.py  # ABC: circuit breaker, timeouts, retry, DLQ
-│   │   ├── legal/        # Patent search (USPTO Orange Book, IPO)
-│   │   ├── clinical/     # Clinical trials (ClinicalTrials.gov)
-│   │   ├── commercial/   # Market data (IQVIA proxies)
-│   │   ├── social/       # Adverse events (FDA FAERS), sentiment
-│   │   ├── knowledge/    # Internal docs RAG (rag_engine.py)
-│   │   └── news/         # Pharma news (Tavily API)
-│   ├── supervisor/
-│   │   ├── main.py       # Cosmos DB Change Feed consumer
-│   │   └── validator.py  # GroundingValidator — rule-based + LLM-as-judge
-│   ├── executor/
-│   │   ├── main.py       # Report synthesis, chart gen, PDF dispatch
-│   │   ├── report_generator.py  # Context-constrained report generation
-│   │   ├── pdf_engine.py        # WeasyPrint rendering + Blob upload
-│   │   └── chart_generator.py   # Matplotlib/Plotly charts
-│   ├── quality_evaluator/    # A2A: LLM quality scoring (accuracy/citation/relevance)
-│   └── prompt_enhancer/      # A2A: Prompt refinement on quality failure
-├── shared/
-│   ├── bootstrap.py     # Agent startup: Key Vault → Config → Telemetry
-│   ├── config.py         # Pydantic Settings (12 service configs: Azure, Redis, Cosmos, Gremlin, NER, PubSub, etc.)
-│   ├── infra/
-│   │   ├── cosmos_client.py     # ETag optimistic concurrency
-│   │   ├── graph_client.py      # Dual: Neo4j (Cypher) / Cosmos Gremlin — feature-flagged
-│   │   ├── ner_service.py       # Azure AI Language NER + regex fallback
-│   │   ├── websocket.py         # Local ConnectionManager + Azure Web PubSub
-│   │   ├── servicebus_client.py # Cached senders, batch publish, DLQ
-│   │   ├── redis_client.py      # Cache, dedup, rate limit, circuit breaker
-│   │   ├── postgres_client.py   # Async analytics dual-write, memory
-│   │   ├── kafka_client.py      # Exactly-once producer, manual-commit consumer
-│   │   ├── message_broker.py    # KafkaBroker (dev) ↔ ServiceBusBroker (prod)
-│   │   ├── celery_app.py        # 3 queues + Beat schedule
-│   │   ├── audit.py             # 21 CFR Part 11 immutable audit trail
-│   │   ├── telemetry.py         # OpenTelemetry + custom metrics
-│   │   ├── health.py            # Deep health checks (Cosmos, Redis, SB, PG, OpenAI)
-│   │   └── keyvault_resolver.py # Key Vault secret resolution (17 secrets)
-│   ├── models/
-│   │   ├── schemas.py    # Pydantic: Session, TaskNode, AgentResult, Citation
-│   │   └── enums.py      # PillarType, SessionStatus, TaskStatus, etc.
-│   ├── a2a/              # Agent-to-Agent protocol
-│   │   ├── agent_card.py # AgentCard capability declaration
-│   │   ├── protocol.py   # Delegate/Report/Escalate messages
-│   │   └── registry.py   # Dual-backed (Redis + Postgres) discovery
-│   ├── spar/
-│   │   └── reflect.py    # SPAR Reflection: citation/timeout/decision/coverage checks
-│   ├── memory/
-│   │   ├── short_term.py # Redis conversation context (20 msg cap)
-│   │   └── long_term.py  # Postgres user preferences + decision history
-│   └── tasks/            # Celery tasks
-│       ├── pdf_task.py
-│       ├── rag_task.py
-│       └── analytics_task.py
+
+Run tests:
+
+```powershell
+pytest tests/ -v
 ```
 
-## Key Patterns & Conventions
+Run static checks:
 
-### Code Style
-- **Python 3.12+** with `from __future__ import annotations`
-- **Ruff** linter: `ruff check src/ tests/` (rules: E, F, I, N, W, UP, B, SIM, RUF)
-- **mypy** strict: `mypy src/ --ignore-missing-imports`
-- **Line length**: 120 characters
-- **Docstrings**: Every module, class, and public method
-
-### Architecture Rules
-1. **Every module** has a docstring block with: Service, Responsibility, Upstream, Downstream, Data ownership, Failure mode
-2. **No shared mutable state** across services — use Redis or message broker
-3. **Cosmos DB is source of truth** for session lifecycle. Redis = ephemeral cache, Postgres = analytics
-4. **Audit trail is compliance-critical** (21 CFR Part 11). Never swallow audit write failures silently
-5. **Circuit breaker pattern** in `base_retriever.py` — fail-fast on external API outages
-6. **ETag optimistic concurrency** in `cosmos_client.py` — prevents race conditions on task status updates
-7. **Context-Constrained Decoding**: LLMs receive ONLY provided context. No parametric memory in claims
-8. **Bootstrap-first startup**: All agents call `bootstrap_agent()` before loading config (Key Vault → Settings → Telemetry)
-
-### Environment Switching
-- `APP_ENV=development` → Kafka, ChromaDB, local Docker stack
-- `APP_ENV=production` → Service Bus, Azure AI Search, Cosmos DB, Azure Redis Cache
-
-### Running Locally
-```bash
-cp .env.example .env  # Fill in Azure OpenAI credentials
-docker compose up -d --build
-# Swagger: http://localhost:8000/docs
-# Kafka UI: http://localhost:8080
-# Frontend: http://localhost:3000
+```powershell
+ruff check src tests
+mypy src --ignore-missing-imports
 ```
 
-### Running Tests
-```bash
-pytest tests/ -v --cov=src --cov-report=term-missing
-python -m mypy src/ --ignore-missing-imports
-python -m ruff check src/ tests/
-```
+## 10. High-Risk Change Areas
 
-### Adding a New Retriever Agent
-1. Create `src/agents/retrievers/<pillar>/` with `__init__.py`, `main.py`, `tools.py`
-2. Subclass `BaseRetriever` and implement `execute_tools(task) → (findings, citations)`
-3. Add Kafka topic in `docker-compose.yml` → `kafka-init` service
-4. Add Service Bus topic in `infra/bicep/main.bicep`
-5. Register AgentCard in the A2A registry
-6. Add unit test: `tests/unit/test_<pillar>_retriever.py`
+Treat these as contract-critical:
+- `src/shared/models/schemas.py`
+- `src/shared/config.py`
+- `src/shared/infra/servicebus_client.py`
+- `src/shared/infra/message_broker.py`
+- `src/agents/planner/main.py`
+- `infra/bicep/main.bicep`
+- `docker-compose.yml`
 
-### Adding a New Celery Task
-1. Create task in `src/shared/tasks/<name>_task.py`
-2. Decorate with `@app.task(name="src.shared.tasks.<name>_task.<func>", queue="pharma.<queue>")`
-3. Add queue routing in `celery_app.py` → `task_routes`
-4. If periodic, add to `beat_schedule`
+If modifying any of these, update docs immediately and verify runtime assumptions.
 
-## Critical Files (Review Before Changing)
-- `config.py` — All services depend on this (12 config classes). Breaking it breaks everything
-- `bootstrap.py` — Agent startup sequence. Key Vault + Config + Telemetry. All agents depend on this
-- `base_retriever.py` — Circuit breaker + retry logic shared by 6 agents
-- `cosmos_client.py` — ETag concurrency. Incorrect changes cause race conditions
-- `graph_client.py` — Dual Neo4j/Gremlin backend. Test both paths before changing
-- `ner_service.py` — Azure NER + regex fallback. Category mapping affects entity extraction
-- `health.py` — Deep health checks. Probe failures trigger K8s pod restarts
-- `websocket.py` — Local/PubSub switch. Protocol compatibility matters
-- `servicebus_client.py` — AMQP connection caching. Pool exhaustion = deadlock
-- `docker-compose.yml` — Service dependency graph. Wrong `depends_on` = startup failures
+## 11. Demo-Readiness Checklist
 
-## Unit Tests (121 passed, 1 skipped, 0 failed)
-```bash
-pytest tests/unit/ -v --tb=short
-# 12 agent-core test files covering: decomposer, publisher, validator,
-# conflict_resolver, report_generator, chart_generator, pdf_engine,
-# quality_evaluator, prompt_enhancer, reflect, mcp_server, dpo_training
-```
+Before demo:
+1. All app services are healthy.
+2. Session create endpoint works.
+3. Retriever consumption is active for each pillar.
+4. Session reaches `COMPLETED` on a known query.
+5. Report endpoint returns expected payload.
+6. UI and/or MCP can observe session progress.
+
+## 12. Documentation Policy
+
+Whenever behavior changes, update:
+- `README.md`
+- `agents.md`
+- one or more files under `docs/`
+- this file (`claude.md`) if contributor guidance changes

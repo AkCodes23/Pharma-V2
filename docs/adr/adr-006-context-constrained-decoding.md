@@ -1,40 +1,59 @@
-# ADR-006: Context-Constrained Decoding for Report Generation
+# ADR-006: Context-Constrained Decoding for Report Synthesis
 
-**Status:** Accepted  
-**Date:** 2026-03-02  
-**Decision Makers:** AI Engineering Team
+Status: Accepted
+Date: 2026-03-02
+Decision owners: AI Engineering
 
 ## Context
 
-The Executor Agent generates executive reports from validated agent results. The LLM (GPT-4o) must:
+Executive report generation requires grounded synthesis from agent outputs. Unconstrained generation can introduce unsupported claims and weaken decision trust.
 
-1. Use ONLY information from agent results — no hallucination
-2. Cite every factual claim with a source reference
-3. Produce deterministic GO/NO-GO decisions based on evidence
-4. Handle missing pillar data gracefully (INSUFFICIENT DATA label)
+Requirements:
+1. report narrative must be based on retrieved evidence
+2. decision outcomes must be deterministic and auditable
+3. missing data must be explicit, not fabricated
 
 ## Decision
 
-**Use Context-Constrained Decoding (CCD)** — a prompt engineering technique that:
+Use context-constrained decoding (CCD) in executor report generation:
+- feed structured validated results as context
+- constrain prompt behavior to context-derived claims
+- require explicit citation-linked narrative sections
+- keep final decision logic deterministic and outside free-form generation
 
-1. Provides all agent results as structured context in the system prompt
-2. Instructs the LLM with strict rules: "Use ONLY the provided context"
-3. Requires inline citation markers (`[Source Name]`) for every claim
-4. Separates the GO/NO-GO decision from the LLM — determined by a deterministic function based on grounding score and conflict severity
+## Alternatives Considered
 
-### Decision Logic (Deterministic)
+1. unconstrained generative report
+- Pros: flexible language
+- Cons: hallucination risk and weak auditability
 
-```python
-def _determine_decision(session):
-    if critical_conflicts:          → NO_GO
-    if grounding_score >= 0.7:      → GO
-    if grounding_score >= 0.5:      → CONDITIONAL
-    else:                           → NO_GO
-```
+2. template-only report with no LLM synthesis
+- Pros: deterministic
+- Cons: poor readability and weak narrative quality
+
+3. constrained synthesis with deterministic decision (chosen)
+- Pros: balanced readability + control + traceability
+- Cons: prompt maintenance overhead
 
 ## Consequences
 
-- LLM generates only the narrative text; the decision is never delegated to the LLM
-- Missing pillars are labeled `INSUFFICIENT DATA` rather than fabricated
-- Citation registry in the PDF includes source_url, retrieved_at, and data_hash
-- Temperature is set to 0.0 for maximum determinism
+Positive:
+- lower hallucination risk in final artifacts
+- clearer evidence-to-decision trace
+
+Tradeoffs:
+- prompt complexity increases
+- stricter constraints can reduce narrative flexibility
+
+## Verification
+
+1. ensure executor decision path is deterministic in code.
+2. verify report sections reference available result fields.
+3. test missing-pillar scenarios for explicit data gaps.
+
+## Rollback
+
+If constrained prompt causes unacceptable report quality:
+1. adjust prompt constraints incrementally
+2. keep deterministic decision path unchanged
+3. avoid reverting to unconstrained generation

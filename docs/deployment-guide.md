@@ -1,112 +1,167 @@
-# Pharma Agentic AI — Deployment Guide
+# Deployment Guide
 
-## Prerequisites
+This document describes how to deploy the stack to Azure and how to verify runtime correctness.
 
-- Azure CLI (`az`) v2.60+
-- Azure subscription with Contributor access
-- Docker + Azure Container Registry (ACR)
-- Node.js 20+ (for frontend build)
-- Python 3.11+ (for backend)
+## 1. Deployment Architecture
 
-## 1. Infrastructure Provisioning
+Provisioned from `infra/bicep/main.bicep`:
+- Managed identity
+- Log Analytics + App Insights
+- Azure OpenAI deployments
+- Cosmos DB (NoSQL + Gremlin capability)
+- Service Bus namespace with topics/subscriptions
+- Event Hubs
+- AI Search
+- Redis
+- PostgreSQL
+- Storage account + reports container
+- Key Vault
+- Container Apps environment and app resources
 
-### 1.1 Deploy Azure Resources (Bicep)
+## 2. Prerequisites
+
+- Azure CLI logged in
+- Subscription + resource group permissions
+- Bicep support in CLI
+- Container registry access
+
+## 3. Resource Group and Bicep Deployment
 
 ```bash
-# Login and set subscription
 az login
-az account set --subscription "<subscription-id>"
+az account set --subscription <subscription-id>
+az group create --name <rg-name> --location <region>
 
-# Create resource group
-az group create --name pharmaai-prod-rg --location eastus2
-
-# Deploy all infrastructure
 az deployment group create \
-  --resource-group pharmaai-prod-rg \
+  --resource-group <rg-name> \
   --template-file infra/bicep/main.bicep \
-  --parameters environment=prod prefix=pharmaai imageTag=v1.0.0
+  --parameters environment=prod prefix=pharmaai imageTag=latest
+```
 
-# Capture outputs
+Capture outputs:
+
+```bash
 az deployment group show \
-  --resource-group pharmaai-prod-rg \
-  --name main \
+  --resource-group <rg-name> \
+  --name <deployment-name> \
   --query properties.outputs
 ```
 
-### 1.2 Seed Key Vault Secrets
+## 4. Message Bus Provisioning Verification
+
+Verify topics:
+- `legal-tasks`
+- `clinical-tasks`
+- `commercial-tasks`
+- `social-tasks`
+- `knowledge-tasks`
+- `news-tasks`
+
+Verify retriever subscriptions:
+- `retriever-legal-sub`
+- `retriever-clinical-sub`
+- `retriever-commercial-sub`
+- `retriever-social-sub`
+- `retriever-knowledge-sub`
+- `retriever-news-sub`
+
+Verify DLQ monitor subscriptions:
+- `retriever-legal-dlq-sub`
+- `retriever-clinical-dlq-sub`
+- `retriever-commercial-dlq-sub`
+- `retriever-social-dlq-sub`
+- `retriever-knowledge-dlq-sub`
+- `retriever-news-dlq-sub`
+
+## 5. Container Image Build and Push
+
+Use repository `Dockerfile` multi-stage targets.
+
+Examples:
 
 ```bash
-KV_NAME="pharmaai-prod-kv"
-
-# Azure OpenAI
-az keyvault secret set --vault-name $KV_NAME --name azure-openai-api-key --value "<key>"
-az keyvault secret set --vault-name $KV_NAME --name azure-openai-endpoint --value "<endpoint>"
-
-# Cosmos DB
-az keyvault secret set --vault-name $KV_NAME --name cosmos-db-key --value "<key>"
-az keyvault secret set --vault-name $KV_NAME --name cosmos-db-endpoint --value "<endpoint>"
-
-# Service Bus
-az keyvault secret set --vault-name $KV_NAME --name service-bus-connection-string --value "<connstr>"
-
-# Blob Storage
-az keyvault secret set --vault-name $KV_NAME --name blob-storage-connection-string --value "<connstr>"
-
-# AI Search
-az keyvault secret set --vault-name $KV_NAME --name ai-search-api-key --value "<key>"
-az keyvault secret set --vault-name $KV_NAME --name ai-search-endpoint --value "<endpoint>"
-
-# Redis
-az keyvault secret set --vault-name $KV_NAME --name redis-url --value "<url>"
-
-# PostgreSQL
-az keyvault secret set --vault-name $KV_NAME --name postgres-url --value "<url>"
+docker build --target planner -t <acr>/planner:<tag> .
+docker build --target supervisor -t <acr>/supervisor:<tag> .
+docker build --target executor -t <acr>/executor:<tag> .
+docker build --target retriever-worker -t <acr>/retriever-worker:<tag> .
 ```
 
-## 2. Container Image Build & Push
+Push images:
 
 ```bash
-ACR_NAME="pharmaaiprodcr"
-az acr login --name $ACR_NAME
-
-# Backend agents
-for agent in planner supervisor executor; do
-  docker build -t $ACR_NAME.azurecr.io/$agent:v1.0.0 -f docker/$agent.Dockerfile .
-  docker push $ACR_NAME.azurecr.io/$agent:v1.0.0
-done
-
-# Frontend
-docker build -t $ACR_NAME.azurecr.io/frontend:v1.0.0 -f docker/frontend.Dockerfile ./frontend
-docker push $ACR_NAME.azurecr.io/frontend:v1.0.0
+docker push <acr>/planner:<tag>
+docker push <acr>/supervisor:<tag>
+docker push <acr>/executor:<tag>
+docker push <acr>/retriever-worker:<tag>
 ```
 
-## 3. Verify Deployment
+## 6. Runtime Configuration Requirements
 
-```bash
-# Check Container App status
-az containerapp show --name pharmaai-prod-planner --resource-group pharmaai-prod-rg --query "properties.runningStatus"
+At deploy time, ensure all required env vars are present.
 
-# Hit health endpoint
-PLANNER_URL=$(az containerapp show --name pharmaai-prod-planner --resource-group pharmaai-prod-rg --query "properties.configuration.ingress.fqdn" -o tsv)
-curl https://$PLANNER_URL/health
+Critical:
+- OpenAI endpoint/key/deployment
+- Cosmos endpoint/key/database/container names
+- Service Bus connection string
+- Key Vault URL (if resolving secrets at startup)
 
-# Check logs
-az containerapp logs show --name pharmaai-prod-planner --resource-group pharmaai-prod-rg --follow
-```
+Recommended:
+- Redis URL
+- Postgres URL
+- AI Search endpoint/key
+- telemetry settings
 
-## 4. Rollback
+Retriever-specific:
+- Set `SERVICE_BUS_SUBSCRIPTION` explicitly per retriever container.
 
-```bash
-# Rollback to previous revision
-az containerapp revision list --name pharmaai-prod-planner --resource-group pharmaai-prod-rg
-az containerapp revision activate --name pharmaai-prod-planner --resource-group pharmaai-prod-rg --revision <previous-revision>
-```
+## 7. Service Startup Targets
 
-## 5. Environment-Specific Configuration
+Expected service ports:
+- Planner: `8000`
+- Supervisor: `8001`
+- Executor: `8002`
+- Retrievers: `8080`
+- MCP: `8010`
 
-| Variable | Dev | Staging | Production |
-|----------|-----|---------|------------|
-| `APP_ENV` | development | staging | production |
-| `KEY_VAULT_URL` | _(empty)_ | `https://pharmaai-staging-kv.vault.azure.net/` | `https://pharmaai-prod-kv.vault.azure.net/` |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | `https://staging.pharmaai.com` | `https://pharmaai.com` |
-| Feature flags | All `false` | All `true` | All `true` |
+Health endpoints:
+- `/health` on each service
+
+## 8. Post-Deployment Verification
+
+1. Health checks for all services.
+2. Create a session through Planner.
+3. Observe status transitions in Planner session endpoint.
+4. Confirm retriever processing and result persistence.
+5. Validate session and execute report generation.
+6. Confirm report URL/payload availability.
+
+## 9. Rollback Strategy
+
+Container Apps revisions:
+1. List revisions for service.
+2. Activate previous healthy revision.
+3. Verify health and core workflow.
+
+General fallback order:
+1. Roll back application image.
+2. Roll back config changes.
+3. Roll back infrastructure only if breaking schema/resource change was introduced.
+
+## 10. Security and Secret Management
+
+Preferred production pattern:
+- Store secrets in Key Vault.
+- Resolve into env at startup through bootstrap flow.
+- Avoid baking credentials into images or static files.
+
+## 11. Deployment Risks and Guardrails
+
+High-risk changes:
+- Topic/subscription name changes
+- Session schema contract changes
+- API path contract changes used by frontend/MCP
+
+Guardrails:
+- Keep docs and code in lockstep.
+- Verify planner API contract and websocket path after deploy.
+- Run smoke test workflow before any demo or release.

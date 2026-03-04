@@ -1,125 +1,165 @@
-# Pharma Agentic AI — Operational Runbook
+# Operational Runbook
 
-## 1. Deployment
+This runbook is for operators supporting local demo, staging, or production-like environments.
 
-### Prerequisites
+## 1. Core Operational Goals
 
-- Azure CLI authenticated (`az login`)
-- AKS credentials configured (`az aks get-credentials`)
-- Docker images built and pushed to ACR
+- Keep all services healthy and responsive.
+- Ensure end-to-end session processing completes.
+- Detect and resolve queue, persistence, or contract drift quickly.
 
-### Deploy Infrastructure
+## 2. Daily Health Checklist
 
-```bash
-# Deploy all Azure resources
-az deployment group create \
-  --resource-group pharma-ai-prod-rg \
-  --template-file infra/bicep/main.bicep \
-  --parameters environment=prod
+1. Verify service health endpoints:
+   - Planner `:8000/health`
+   - Supervisor `:8001/health`
+   - Executor `:8002/health`
+   - Retriever services `:8080/health` (per container)
+2. Verify message bus connectivity.
+3. Verify Cosmos read/write path.
+4. Verify report endpoint for a known-good session.
 
-# Apply K8s manifests
-kubectl apply -f infra/k8s/deployment.yaml
-kubectl apply -f infra/k8s/keda-scalers.yaml
-```
+## 3. Local Compose Operations
 
-### Run Database Migrations
-
-```bash
-alembic upgrade head
-```
-
-## 2. Health Checks
-
-| Service | Endpoint | Expected |
-| ------- | -------- | -------- |
-| Planner | `GET /health` on port 8000 | `{"status": "healthy"}` |
-| Supervisor | `GET /health` on port 8001 | `{"status": "healthy"}` |
-| Executor | `GET /health` on port 8002 | `{"status": "healthy"}` |
-
-### Check All Pods
+Start stack:
 
 ```bash
-kubectl get pods -n pharma-ai
-kubectl top pods -n pharma-ai
+docker compose up -d --build
 ```
 
-## 3. Common Issues
-
-### Service Bus Queue Backlog
-
-**Symptom**: Tasks accumulating in queues, KEDA not scaling.
-
-**Resolution**:
-
-1. Check KEDA scaler status: `kubectl get scaledobject -n pharma-ai`
-2. Verify Service Bus connection: `kubectl logs deployment/retriever-workers -n pharma-ai`
-3. Manual scale: `kubectl scale deployment/retriever-workers --replicas=5 -n pharma-ai`
-
-### Cosmos DB Throttling (429)
-
-**Symptom**: HTTP 429 errors in logs.
-
-**Resolution**:
-
-1. Check RU consumption in Azure Portal
-2. Increase autoscale max throughput in Bicep parameters
-3. Redeploy: `az deployment group create ...`
-
-### Graph Client Gremlin Errors
-
-**Symptom**: Entity ingestion failing in production.
-
-**Resolution**:
-
-1. Check `GREMLIN_USE_GREMLIN` flag is set correctly
-2. Verify Cosmos Gremlin endpoint: `GREMLIN_ENDPOINT`
-3. Fallback: Set `GREMLIN_USE_GREMLIN=false` to use Neo4j
-
-### NER Service Degraded
-
-**Symptom**: All entities extracted via regex (lower quality).
-
-**Resolution**:
-
-1. Check `AI_LANGUAGE_ENDPOINT` and `AI_LANGUAGE_API_KEY` are set
-2. Verify Azure AI Language quota in Azure Portal
-3. Regex fallback is automatic — no downtime
-
-### WebSocket/PubSub Not Delivering
-
-**Symptom**: Frontend not receiving real-time updates.
-
-**Resolution**:
-
-1. Check `WEB_PUBSUB_USE_AZURE` flag
-2. Verify PubSub connection string
-3. For local dev: ensure Redis is running for Pub/Sub fan-out
-
-## 4. Rollback
+Check status:
 
 ```bash
-# Rollback to previous deployment
-kubectl rollout undo deployment/planner-agent -n pharma-ai
-kubectl rollout undo deployment/supervisor-agent -n pharma-ai
-kubectl rollout undo deployment/executor-agent -n pharma-ai
-kubectl rollout undo deployment/frontend -n pharma-ai
-
-# Verify rollback
-kubectl rollout status deployment/planner-agent -n pharma-ai
+docker compose ps
 ```
 
-## 5. Secrets Rotation
-
-1. Update secrets in Azure Key Vault
-2. Recreate K8s secret: `kubectl create secret generic pharma-ai-secrets --from-env-file=.env -n pharma-ai --dry-run=client -o yaml | kubectl apply -f -`
-3. Restart deployments: `kubectl rollout restart deployment -n pharma-ai`
-
-## 6. DPO Training Pipeline
+Tail logs:
 
 ```bash
-# Export training data
-python -m src.ml.dpo_training --data models/dpo/training_data.jsonl --output models/dpo --backend local
-
-# Submit to Azure fine-tuning (production)
-python -m src.ml.dpo_training --data models/dpo/training_data.jsonl --output models/dpo --backend azure
+docker compose logs -f planner
+docker compose logs -f retriever-legal
 ```
+
+Stop and clean:
+
+```bash
+docker compose down -v
+```
+
+## 4. Incident Response Playbooks
+
+### 4.1 Service fails startup
+
+Symptoms:
+- container restarting
+- healthcheck failing
+
+Actions:
+1. Inspect logs for import/config errors.
+2. Confirm `PORT` environment variable matches expected service port.
+3. Validate required env vars are set.
+4. Rebuild image if code and container mismatch suspected.
+
+### 4.2 Retriever not consuming tasks
+
+Symptoms:
+- session stuck in `RETRIEVING`
+- queue depth increases
+
+Actions:
+1. Verify retriever service is healthy.
+2. Confirm `SERVICE_BUS_SUBSCRIPTION` matches provisioned subscription.
+3. Confirm topic and subscription exist.
+4. Check Service Bus auth/connection string.
+
+### 4.3 Session polling is slow or expensive
+
+Symptoms:
+- high Cosmos RU usage
+- frequent status polling overhead
+
+Actions:
+1. Confirm cache layer is active.
+2. Increase poll interval on clients if needed.
+3. Inspect session endpoint latency.
+
+### 4.4 WebSocket updates missing
+
+Symptoms:
+- polling works, stream updates do not
+
+Actions:
+1. Verify planner websocket endpoint path: `/ws/sessions/{session_id}`.
+2. In local mode, verify Redis is running and subscriber loop started.
+3. In Azure mode, verify Web PubSub config values and token flow.
+
+### 4.5 Audit backlog or gaps
+
+Symptoms:
+- delayed or missing audit entries
+
+Actions:
+1. Check audit worker logs.
+2. Verify Cosmos audit container access.
+3. Confirm flush worker is running and service is not terminated abruptly.
+
+## 5. Recovery Procedures
+
+### 5.1 Restart a single service
+
+```bash
+docker compose restart planner
+```
+
+### 5.2 Restart all app services
+
+```bash
+docker compose restart planner supervisor executor retriever-legal retriever-clinical retriever-commercial retriever-social retriever-knowledge retriever-news
+```
+
+### 5.3 Recreate full environment
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+## 6. Performance Tuning Knobs
+
+- Service Bus consumer `prefetch_count` and `max_messages`
+- Retriever timeout settings in base retriever
+- Frontend polling interval
+- Cosmos RU autoscale thresholds
+- Worker concurrency (Celery and retriever replicas)
+
+## 7. Monitoring Targets
+
+Track at minimum:
+- session throughput and completion rate
+- mean and p95 session completion time
+- retriever error/retry/DLQ rates
+- Cosmos and Service Bus latency/error rates
+- healthcheck failure counts
+
+## 8. Demo-Day Runbook
+
+1. Bring stack up with compose.
+2. Verify health endpoints.
+3. Run one known demo query and confirm complete path.
+4. Keep live logs open for planner + one retriever + executor.
+5. If issue occurs, fall back to polling + summary report endpoint.
+
+## 9. Escalation Guidance
+
+Escalate when:
+- multiple services fail concurrently
+- persistent message loss or duplicate processing observed
+- Cosmos writes failing across planner/retrievers
+- core API contracts return repeated 404/500 errors after rollback
+
+## 10. Post-Incident Checklist
+
+- document root cause
+- identify contract/config drift
+- add/update regression tests
+- update docs in `README.md`, `agents.md`, and `docs/*`

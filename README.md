@@ -1,200 +1,234 @@
-# 🧬 Pharma Agentic AI — Strategic Command Center
+# Pharma Agentic AI
 
-> **Distributed Multi-Agent Pharmaceutical Intelligence Platform**
->
-> Reduce Time-to-Insight from 3 weeks to under 5 minutes.
-> 100% citation-grounded. Zero hallucinations. Serverless economics.
+Distributed multi-agent platform for pharmaceutical market intelligence. The system decomposes a user query into pillar-specific tasks, executes deterministic retrieval tools, validates grounding, and produces a final decision report.
 
-[![CI](https://github.com/your-org/pharma-agentic-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/pharma-agentic-ai/actions)
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://python.org)
-[![Next.js 15](https://img.shields.io/badge/Next.js-15-black.svg)](https://nextjs.org)
-[![Azure](https://img.shields.io/badge/Azure-Native-0078D4.svg)](https://azure.microsoft.com)
+This repository currently supports:
+- Planner API service (`:8000`)
+- Supervisor service (`:8001`)
+- Executor service (`:8002`)
+- Six retriever worker-services (Legal, Clinical, Commercial, Social, Knowledge, News)
+- MCP gateway (`:8010`)
+- Quality Evaluator and Prompt Enhancer services
+- Local stack via Docker Compose (Kafka + Redis + Postgres + observability)
+- Azure infrastructure via Bicep
 
----
+## 1. System Overview
 
-## 🎯 Problem
+Request lifecycle:
+1. User submits query to Planner.
+2. Planner decomposes intent into tasks and persists session state in Cosmos.
+3. Planner publishes one message per pillar to message bus.
+4. Retriever services consume pillar messages from Service Bus subscriptions.
+5. Each retriever executes deterministic tools and writes results to Cosmos.
+6. Supervisor validates grounding and conflict state.
+7. Executor synthesizes report, generates artifacts, completes session.
+8. Frontend or MCP clients poll/stream session status and fetch report output.
 
-The pharmaceutical industry faces a **$300B patent cliff** (2025–2030). Strategic decisions like *"Should we launch a generic in India by 2027?"* require simultaneous validation across **four isolated pillars**:
+Current routing conventions:
+- Service Bus topics: `legal-tasks`, `clinical-tasks`, `commercial-tasks`, `social-tasks`, `knowledge-tasks`, `news-tasks`
+- Retriever subscriptions:
+  - `retriever-legal-sub`
+  - `retriever-clinical-sub`
+  - `retriever-commercial-sub`
+  - `retriever-social-sub`
+  - `retriever-knowledge-sub`
+  - `retriever-news-sub`
 
-| Pillar | Question | Data Source |
-|--------|----------|-------------|
-| ⚖️ **Legal** | Are blocking patents expired? | USPTO Orange Book, IPO |
-| 🧪 **Clinical** | Is the market saturated with trials? | ClinicalTrials.gov, CDSCO |
-| 📊 **Commercial** | Is the TAM expanding? | IQVIA, Financial APIs |
-| 🛡️ **Social** | Are there safety signals? | FDA FAERS |
+## 2. Repository Structure
 
-**Standard LLMs** hallucinate patent dates → **regulatory liability**.  
-**Human analysts** work sequentially → **3-week cycle time**.
+- `src/agents/planner/`: Planner FastAPI app and decomposition/publishing flow
+- `src/agents/retrievers/`: Base retriever + pillar implementations
+- `src/agents/supervisor/`: Validation and conflict checks
+- `src/agents/executor/`: Report generation and artifact orchestration
+- `src/agents/quality_evaluator/`: A2A quality scoring service
+- `src/agents/prompt_enhancer/`: A2A prompt rewrite service
+- `src/shared/`: shared config, infra clients, telemetry, websocket, models
+- `src/mcp/`: MCP server exposing platform tools/resources
+- `src/frontend/`: Next.js dashboard
+- `infra/bicep/main.bicep`: consolidated Azure provisioning
+- `docker-compose.yml`: complete local runtime stack
+- `docs/`: onboarding, API, deployment, runbook, ADRs
 
-## 🚀 Solution
+## 3. Service Contracts
 
-We deploy an **asynchronous Agent Swarm** — not one AI trying to know everything, but a **Planner orchestrating specialists**:
+### Planner (`src.agents.planner.main:app`)
+Port: `8000`
 
-```
-User Query → Planner Agent → Service Bus → Retriever Swarm (parallel) 
-                                              → Cosmos DB → Supervisor → Executor → PDF Report
-```
+Endpoints:
+- `POST /api/v1/sessions`
+- `GET /api/v1/sessions/{session_id}`
+- `GET /api/v1/sessions`
+- `GET /api/v1/sessions/{session_id}/report`
+- `GET /audit`
+- `GET /metrics/agents`
+- `GET /health`
+- `WS /ws/sessions/{session_id}`
 
-### Three Promises
+### Supervisor (`src.agents.supervisor.main:app`)
+Port: `8001`
 
-1. **Precision over Prediction** — Agents use deterministic API tools, not parametric memory
-2. **Systems Thinking over Single Models** — Planner-Retriever-Supervisor-Executor with KEDA scaling
-3. **Intelligence that Drives Decisions** — Structured GO/NO-GO with cryptographic citation tracing
+Endpoints:
+- `POST /api/v1/sessions/{session_id}/validate`
+- `GET /health`
 
----
+### Executor (`src.agents.executor.main:app`)
+Port: `8002`
 
-## 🏗 Architecture
+Endpoints:
+- `POST /api/v1/sessions/{session_id}/execute`
+- `GET /health`
 
-```
-pharma-agentic-ai/
-├── infra/
-│   ├── bicep/main.bicep            # 12+ Azure resources (OpenAI, Cosmos, SB, etc.)
-│   ├── k8s/
-│   │   ├── deployment.yaml         # AKS manifests (Planner, Supervisor, Executor, Frontend)
-│   │   ├── keda-scalers.yaml       # Service Bus queue-based auto-scaling (1→10 replicas)
-│   │   └── secrets.template.yaml   # Secrets template (never committed)
-│   └── migrations/
-│       └── 001_initial.py          # PostgreSQL schema (sessions, audit, metrics, DPO)
-├── src/
-│   ├── agents/
-│   │   ├── planner/                # FastAPI :8000 — query decomposition + task publishing
-│   │   ├── retrievers/
-│   │   │   ├── base_retriever.py   # Abstract lifecycle (consume → execute → persist)
-│   │   │   ├── legal/              # USPTO Orange Book + IPO web scraper + fallback
-│   │   │   ├── clinical/           # ClinicalTrials.gov v2 + FDA approvals + CDSCO scraper
-│   │   │   ├── commercial/         # SEC EDGAR + Yahoo Finance + TAM estimation
-│   │   │   ├── social/             # FDA FAERS + PubMed E-utilities + composite sentiment
-│   │   │   └── knowledge/          # Azure AI Search RAG pipeline (hybrid search)
-│   │   ├── supervisor/             # Grounding Validator (rule + conflict + LLM judge)
-│   │   └── executor/               # Report synthesis + PDF + charts
-│   ├── frontend/                   # Next.js 15 dark dashboard (live API, no mocks)
-│   ├── ml/
-│   │   └── dpo_training.py         # DPO pipeline (data collector + local/Azure trainer)
-│   └── shared/
-│       ├── infra/
-│       │   ├── cosmos_client.py     # Cosmos DB operations + Change Feed
-│       │   ├── graph_client.py      # Dual-backend: Neo4j (dev) + Cosmos Gremlin (prod)
-│       │   ├── ner_service.py       # Azure AI Language NER + regex fallback
-│       │   ├── websocket.py         # Local ConnectionManager + Azure Web PubSub
-│       │   ├── servicebus_client.py # Topic-based pub/sub with DLQ
-│       │   └── telemetry.py         # OpenTelemetry + structlog + Azure Monitor
-│       └── config.py               # Unified Pydantic Settings (12 service configs)
-├── tests/
-│   ├── unit/                        # 12 test files, ~80+ test cases
-│   ├── test_integration.py          # Cross-service integration tests
-│   └── test_e2e_keytruda.py         # End-to-end scenario test
-├── .github/workflows/ci-cd.yaml     # 8-job CI/CD (lint, test, security, build, deploy)
-├── Dockerfile                       # Multi-stage (planner | supervisor | executor | worker)
-└── pyproject.toml
-```
+### Retriever services (`src.agents.retrievers.<pillar>.main`)
+Port: `8080` per retriever container
 
----
+Endpoints:
+- `GET /health`
 
-## ⚡ Quick Start
+Background behavior:
+- Starts Service Bus consumer loop on app lifespan startup.
+- Consumes using configured `SERVICE_BUS_SUBSCRIPTION`.
+- Writes task status/result back to Cosmos.
 
-### Prerequisites
+### MCP (`src/mcp/mcp_server.py http`)
+Port: `8010`
 
-- Python 3.12+
-- Node.js 20+
-- Azure subscription (for full deployment)
+Provides tools:
+- create session
+- get/list sessions
+- get report
+- FDA and ClinicalTrials search
+- capabilities and agent status
 
-### 1. Clone & Install
+### Quality Evaluator / Prompt Enhancer
+Port: `8080`
 
-```bash
-git clone https://github.com/your-org/pharma-agentic-ai.git
-cd pharma-agentic-ai
+Endpoints:
+- Quality Evaluator: `POST /evaluate`, `GET /health`
+- Prompt Enhancer: `POST /enhance`, `GET /health`
 
-# Python backend
-pip install -e ".[dev]"
+## 4. Prerequisites
 
-# Frontend
-cd src/frontend
-npm install
-```
+Required:
+- Python 3.11+ (3.12 recommended)
+- Docker Desktop (for full local stack)
+- Node.js 20+ (frontend local dev)
 
-### 2. Configure Environment
+For Azure deployment:
+- Azure CLI
+- Contributor access to target subscription/resource group
+
+## 5. Environment Configuration
+
+Start from `.env.example`:
 
 ```bash
 cp .env.example .env
-# Edit .env with your Azure credentials
 ```
 
-### 3. Run Backend (Planner Agent)
+Minimum variables to run core services locally:
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_API_KEY`
+- `COSMOS_DB_ENDPOINT`
+- `COSMOS_DB_KEY`
+- `SERVICE_BUS_CONNECTION_STRING` (if running with Service Bus)
+
+Common local defaults in Compose:
+- Redis: `redis://...@redis:6379/...`
+- Postgres: `postgresql://pharma:...@postgres:5432/pharma_ai`
+- Kafka: `kafka:29092`
+
+## 6. Running the Project
+
+### Option A: Full stack via Docker Compose (recommended for demo)
 
 ```bash
-uvicorn src.agents.planner.main:app --reload --port 8000
+docker compose up -d --build
+docker compose ps
 ```
 
-### 4. Run Frontend
+Important URLs:
+- Frontend: `http://localhost:3000`
+- Planner API: `http://localhost:8000`
+- Supervisor: `http://localhost:8001`
+- Executor: `http://localhost:8002`
+- MCP HTTP transport: `http://localhost:8010`
+- Kafka UI: `http://localhost:8080`
+- Jaeger: `http://localhost:16686`
+
+Stop:
+
+```bash
+docker compose down -v
+```
+
+### Option B: Service-by-service local run
+
+Backend service examples:
+
+```bash
+uvicorn src.agents.planner.main:app --host 0.0.0.0 --port 8000
+uvicorn src.agents.supervisor.main:app --host 0.0.0.0 --port 8001
+uvicorn src.agents.executor.main:app --host 0.0.0.0 --port 8002
+python -m src.agents.retrievers.legal.main
+```
+
+Frontend:
 
 ```bash
 cd src/frontend
+npm install
 npm run dev
 ```
 
-### 5. Run Tests
+## 7. Testing and Quality
+
+Run tests:
 
 ```bash
-pytest tests/ -v --cov=src
+pytest tests/ -v
 ```
 
----
+Run lint/type checks:
 
-## 🔐 Security & Compliance
+```bash
+ruff check src tests
+ruff format src tests
+mypy src --ignore-missing-imports
+```
 
-| Standard | Implementation |
-|----------|---------------|
-| **FDA 21 CFR Part 11** | Immutable Cosmos DB audit trail, SHA-256 payload hashing |
-| **EU GMP Annex 11** | Electronic signatures via Azure Entra ID MFA |
-| **Network Security** | Azure Private Link, zero public endpoints |
-| **Identity** | Passwordless (Managed Identities), RBAC |
-| **Encryption** | AES-256 at-rest, TLS 1.3 in-transit |
+Notes:
+- Some unit tests require optional dependencies (`respx`, Azure SDKs) and env vars.
+- Collection can fail without required packages or OpenAI config.
 
----
+## 8. Demo Execution Checklist
 
-## 💰 Cost Model
+Before demo:
+1. `docker compose ps` shows all primary services healthy.
+2. `GET /health` succeeds for planner/supervisor/executor.
+3. Retriever services have `SERVICE_BUS_SUBSCRIPTION` env values matching Bicep subscriptions.
+4. Create a session with Planner and verify status progresses through:
+   - `PLANNING`
+   - `RETRIEVING`
+   - `VALIDATING`
+   - `SYNTHESIZING`
+   - `COMPLETED`
+5. Report endpoint returns payload for `format=pdf` or `format=summary`.
 
-| Scale | Monthly Cost | Per Query |
-|:-----:|:-----------:|:---------:|
-| Idle | **$0** | — |
-| 10K queries | ~$150 | $0.015 |
-| 100K queries | ~$1,300 | $0.013 |
+## 9. Documentation Index
 
----
+- [Agent Registry](agents.md)
+- [Developer Onboarding](docs/developer-onboarding.md)
+- [API Integration Guide](docs/api-integration-guide.md)
+- [Deployment Guide](docs/deployment-guide.md)
+- [Operational Runbook](docs/runbook.md)
+- [Architecture Decision Records](docs/adr.md)
 
-## 📊 Key Metrics
+## 10. Known Constraints
 
-| Metric | Target |
-|--------|--------|
-| Time-to-Insight | < 5 minutes |
-| Hallucination Rate | 0% |
-| Citation Coverage | 100% |
-| System Uptime | 99.9% |
+- Full integration depends on external APIs and Azure credentials.
+- Some local tests are environment-sensitive.
+- WebSocket fan-out is Redis-backed in local mode and Web PubSub-backed when configured for Azure.
 
----
+## 11. License
 
-## 🛠 Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Orchestration | Microsoft Semantic Kernel |
-| Compute | AKS (Kubernetes) + KEDA auto-scaling |
-| LLM | Azure OpenAI GPT-4o |
-| State | Azure Cosmos DB (NoSQL + Gremlin) |
-| Messaging | Azure Service Bus (6 topics) |
-| Graph | Neo4j (dev) / Cosmos Gremlin (prod) |
-| NER | Azure AI Language + regex fallback |
-| Real-time | Azure Web PubSub + local WebSocket |
-| RAG | Azure AI Search (hybrid + semantic) |
-| Frontend | Next.js 15, React 19, TypeScript |
-| ML | DPO training (TRL local / Azure fine-tune) |
-| Observability | OpenTelemetry → Azure Monitor |
-| IaC | Azure Bicep (12+ resources) |
-| CI/CD | GitHub Actions (8-job pipeline) |
-| Security | Bandit + Safety scan, secrets in Key Vault |
-
----
-
-## 📄 License
-
-Proprietary. All rights reserved.
+Proprietary. Internal use only unless explicitly authorized.

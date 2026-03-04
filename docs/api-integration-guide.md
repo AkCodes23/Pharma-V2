@@ -1,127 +1,232 @@
-# Pharma Agentic AI — API Integration Guide
+# API Integration Guide
 
-## Base URL
+This guide documents the externally relevant API contracts for integrating with the platform.
 
-| Environment | URL |
-|-------------|-----|
-| Local | `http://localhost:8000` |
-| Staging | `https://pharmaai-staging-planner.<region>.azurecontainerapps.io` |
-| Production | `https://pharmaai-prod-planner.<region>.azurecontainerapps.io` |
+## 1. Base URLs
 
-## Authentication
+Local:
+- Planner API: `http://localhost:8000`
+- Supervisor API: `http://localhost:8001`
+- Executor API: `http://localhost:8002`
+- MCP HTTP transport: `http://localhost:8010`
 
-All API requests require a Bearer token from Azure Entra ID:
+In deployed environments, replace hostnames with your ingress/FQDN values.
 
-```bash
-TOKEN=$(az account get-access-token --resource api://pharmaai --query accessToken -o tsv)
-curl -H "Authorization: Bearer $TOKEN" https://<base-url>/api/v1/sessions
-```
+## 2. Planner API
 
-## Endpoints
+### 2.1 Create Session
 
-### POST /api/v1/sessions — Create Session
+`POST /api/v1/sessions`
 
-Creates a new drug analysis session and triggers the multi-agent pipeline.
+Request body:
 
-**Request:**
 ```json
 {
-  "query": "Analyze biosimilar entry strategy for Humira in EU market by 2027",
-  "user_id": "user-azure-oid"
+  "query": "Analyze market-entry strategy for semaglutide in US",
+  "user_id": "integration-user"
 }
 ```
 
-**Response (201):**
+Response `201`:
+
 ```json
 {
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "uuid",
   "status": "PLANNING",
-  "task_count": 5,
+  "task_count": 6,
   "tasks": [
-    { "task_id": "t-001", "pillar": "LEGAL", "description": "Patent analysis", "status": "QUEUED" },
-    { "task_id": "t-002", "pillar": "CLINICAL", "description": "Trial pipeline", "status": "QUEUED" }
+    {
+      "task_id": "...",
+      "pillar": "LEGAL",
+      "description": "...",
+      "status": "QUEUED"
+    }
   ],
-  "websocket_url": "/ws/sessions/550e8400-e29b-41d4-a716-446655440000"
+  "websocket_url": "/ws/sessions/uuid"
 }
 ```
 
-### GET /api/v1/sessions/{session_id} — Get Session Status
+### 2.2 Get Session
 
-**Response (200):**
+`GET /api/v1/sessions/{session_id}`
+
+Response includes:
+- session identity and status
+- original query
+- task graph
+- collected agent results
+- validation block
+- decision fields
+- report URL and timestamps
+
+### 2.3 List Sessions
+
+`GET /api/v1/sessions`
+
+Query params:
+- `drug_name` (optional)
+- `user_id` (optional)
+- `status` (optional)
+- `limit` (default 10, max 100)
+- `offset` (default 0)
+
+### 2.4 Get Session Report Metadata/Payload
+
+`GET /api/v1/sessions/{session_id}/report`
+
+Query param:
+- `format`: `pdf` | `summary` | `json`
+
+Behavior:
+- `pdf`: returns report URL metadata
+- `summary`: returns decision summary data
+- `json`: returns expanded report/session payload
+
+### 2.5 Audit Listing
+
+`GET /audit`
+
+Query params:
+- `limit` (default 100, max 500)
+- `session_id` (optional)
+
+### 2.6 Agent Metrics
+
+`GET /metrics/agents`
+
+Returns derived metrics from recent sessions:
+- average latency
+- success rate
+- invocation count
+
+### 2.7 Health
+
+`GET /health`
+
+### 2.8 Session WebSocket Stream
+
+`WS /ws/sessions/{session_id}`
+
+Local mode:
+- streams session events over planner websocket handler
+
+Azure Web PubSub mode:
+- planner returns redirect token payload via websocket negotiation path in manager behavior
+
+## 3. Supervisor API
+
+### 3.1 Validate Session
+
+`POST /api/v1/sessions/{session_id}/validate`
+
+Response shape:
+
 ```json
 {
-  "session_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "COMPLETED",
-  "query": "Analyze biosimilar entry strategy for Humira...",
-  "task_graph": [...],
-  "agent_results": [...],
-  "validation": {
-    "is_valid": true,
-    "grounding_score": 0.87,
-    "conflicts": []
-  },
-  "decision": "CONDITIONAL",
-  "decision_rationale": "Strong pipeline but patent expiry timing uncertain",
-  "report_url": "https://pharmaai.blob.core.windows.net/reports/550e8400.pdf",
-  "created_at": "2026-03-02T14:30:00Z",
-  "updated_at": "2026-03-02T14:32:15Z"
+  "session_id": "uuid",
+  "validated": true,
+  "ready_for_execution": true,
+  "is_valid": true,
+  "grounding_score": 0.85,
+  "conflict_count": 0
 }
 ```
 
-### GET /health — Health Check
+### 3.2 Health
 
-**Response (200):**
-```json
-{ "status": "healthy", "service": "planner-agent" }
-```
+`GET /health`
 
-### WebSocket /ws/sessions/{session_id} — Real-Time Updates
+## 4. Executor API
 
-Connect to receive live session progress updates:
+### 4.1 Execute Session
 
-```javascript
-const ws = new WebSocket('wss://<base-url>/ws/sessions/<session_id>');
-ws.onmessage = (event) => {
-  const update = JSON.parse(event.data);
-  // update.type: 'TASK_STARTED' | 'TASK_COMPLETED' | 'VALIDATION_RESULT' | 'SESSION_COMPLETED'
-  console.log(`${update.type}: ${update.pillar} — ${update.status}`);
-};
-```
+`POST /api/v1/sessions/{session_id}/execute`
 
-## Session Status Flow
+Response includes:
+- final decision
+- rationale
+- report URL
+- optional markdown/charts metadata
 
-```
-PLANNING → RETRIEVING → VALIDATING → SYNTHESIZING → COMPLETED
-                                                   ↘ FAILED
-```
+### 4.2 Health
 
-## Error Codes
+`GET /health`
 
-| Status | Meaning |
-|--------|---------|
-| 400 | Invalid request (query too short, invalid drug name) |
-| 401 | Missing or invalid Bearer token |
-| 404 | Session not found |
-| 429 | Rate limit exceeded (per user_id) |
-| 500 | Internal error (logged with correlation ID) |
-| 503 | Service not ready (still initializing) |
+## 5. A2A Services
 
-## Rate Limits
+Quality Evaluator:
+- `POST /evaluate`
+- `GET /health`
 
-- **10 sessions/minute** per `user_id`
-- **100 requests/minute** per IP for status queries
+Prompt Enhancer:
+- `POST /enhance`
+- `GET /health`
 
-## MCP Integration
+## 6. MCP Integration
 
-The platform exposes an MCP server for LLM tool-use integration:
+MCP server (`src/mcp/mcp_server.py`) exposes tool wrappers for Planner and selected data sources.
 
-```python
-# MCP tool: pharma_create_session
-params = {
-    "drug_name": "Keytruda",
-    "target_market": "US",
-    "user_id": "mcp-client"
-}
-```
+Examples of tool-level capabilities:
+- create session
+- get/list sessions
+- fetch report
+- FDA search
+- clinical trials search
+- list capabilities
+- get active agents
 
-See `src/mcp/mcp_server.py` for all 8 available MCP tools.
+When integrating MCP clients, configure:
+- `PLANNER_URL`
+- `PHARMA_INTERNAL_API_KEY`
+
+## 7. Status Model
+
+Session status:
+- `PLANNING`
+- `RETRIEVING`
+- `VALIDATING`
+- `SYNTHESIZING`
+- `COMPLETED`
+- `FAILED`
+
+Task status:
+- `QUEUED`
+- `RUNNING`
+- `COMPLETED`
+- `RETRYING`
+- `FAILED`
+- `DLQ`
+
+## 8. Error Handling and Retries
+
+Common HTTP codes:
+- `400`: bad input/invalid request parameters
+- `404`: session/resource not found
+- `422`: validation errors (request schema)
+- `429`: rate-limit behavior where configured
+- `500`: internal processing failure
+- `503`: service not initialized/ready
+
+Integration recommendations:
+- Retry `503` and transient `500` with exponential backoff.
+- Do not retry `400/404/422` without request change.
+- Poll session state for long-running operations.
+
+## 9. Integration Patterns
+
+Pattern A: Planner-only orchestration
+1. Create session via Planner.
+2. Poll Planner session endpoint.
+3. Retrieve report endpoint when status is terminal.
+
+Pattern B: Explicit orchestration (advanced)
+1. Create session via Planner.
+2. Trigger Supervisor validation endpoint.
+3. Trigger Executor endpoint.
+4. Poll Planner for final report URL.
+
+## 10. Contract Stability Notes
+
+- Planner session endpoints are the preferred stable integration surface.
+- Internal retriever tool output fields can evolve with source APIs.
+- Keep client logic resilient to additive fields in response payloads.
