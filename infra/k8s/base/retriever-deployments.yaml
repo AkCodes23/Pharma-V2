@@ -34,6 +34,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           env:
             - name: PILLAR
               value: "LEGAL"
@@ -87,6 +89,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           env:
             - name: PILLAR
               value: "CLINICAL"
@@ -140,6 +144,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           env:
             - name: PILLAR
               value: "COMMERCIAL"
@@ -193,6 +199,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           env:
             - name: PILLAR
               value: "SOCIAL"
@@ -246,6 +254,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           env:
             - name: PILLAR
               value: "KNOWLEDGE"
@@ -299,6 +309,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           env:
             - name: PILLAR
               value: "NEWS"

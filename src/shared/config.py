@@ -63,7 +63,7 @@ class KeyVaultConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="KEY_VAULT_")
 
-    url: str = Field(..., description="Key Vault URL")
+    url: str = Field(default="", description="Key Vault URL")
 
 
 class BlobStorageConfig(BaseSettings):
