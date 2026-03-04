@@ -301,6 +301,8 @@ async def get_session(
             created_at=session.created_at.isoformat(),
             updated_at=session.updated_at.isoformat(),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to get session", extra={"session_id": session_id})
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from e
