@@ -19,16 +19,18 @@ Performance optimizations:
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from azure.servicebus import (
     ServiceBusClient,
-    ServiceBusMessage as AzureMessage,
     ServiceBusMessageBatch,
     ServiceBusReceiver,
     ServiceBusSender,
+)
+from azure.servicebus import (
+    ServiceBusMessage as AzureMessage,
 )
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -216,7 +218,7 @@ class ServiceBusConsumer:
 
     # Prefetch reduces latency by pre-fetching messages from the broker
     # before the application requests them. Value of 10 is optimal for
-    # our workload (5 pillars × ~2 tasks per query).
+    # our workload (5 pillars x ~2 tasks per query).
     PREFETCH_COUNT = 10
 
     def __init__(self, pillar: PillarType, subscription_name: str) -> None:
@@ -291,7 +293,7 @@ class ServiceBusConsumer:
 
                 for msg in messages:
                     try:
-                        body = str(msg)
+                        body = self._extract_body(msg)
                         parsed = ServiceBusMessage.model_validate_json(body)
                         handler(parsed)
                         receiver.complete_message(msg)
@@ -312,6 +314,31 @@ class ServiceBusConsumer:
                             reason="ProcessingError",
                             error_description="Handler raised an unrecoverable exception",
                         )
+
+    @staticmethod
+    def _extract_body(msg: Any) -> str:
+        """Extract and decode message body reliably across Azure SDK body types."""
+        payload = msg.body
+
+        if isinstance(payload, (bytes, bytearray)):
+            return payload.decode("utf-8")
+
+        if isinstance(payload, str):
+            return payload
+
+        # AmqpAnnotatedMessageBody often yields an iterable of data sections.
+        if hasattr(payload, "__iter__"):
+            parts: list[bytes] = []
+            for part in payload:
+                if isinstance(part, bytes):
+                    parts.append(part)
+                elif isinstance(part, bytearray):
+                    parts.append(bytes(part))
+                else:
+                    parts.append(str(part).encode("utf-8"))
+            return b"".join(parts).decode("utf-8")
+
+        return str(msg)
 
     def stop(self) -> None:
         """Signal the consumption loop to stop."""

@@ -24,17 +24,18 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.agents.planner.decomposer import IntentDecomposer
 from src.agents.planner.publisher import TaskPublisher
 from src.shared.infra.audit import AuditService
+from src.shared.infra.auth import is_admin_request, require_admin_user, require_authenticated_user
 from src.shared.infra.cache_middleware import get_session_cache
 from src.shared.infra.cosmos_client import CosmosDBClient
 from src.shared.infra.rate_limit import rate_limiter
 from src.shared.infra.redis_client import RedisClient
 from src.shared.infra.servicebus_client import ServiceBusPublisher
-from src.shared.infra.telemetry import instrument_fastapi, setup_telemetry
+from src.shared.infra.telemetry import instrument_fastapi
 from src.shared.infra.websocket import (
     start_websocket_manager,
     stop_websocket_manager,
@@ -118,8 +119,19 @@ instrument_fastapi(app)
 class CreateSessionRequest(BaseModel):
     """Request body for creating a new query session."""
 
-    query: str = Field(..., min_length=10, max_length=2000, description="Natural-language strategic query")
+    query: str = Field(default="", max_length=2000, description="Natural-language strategic query")
     user_id: str = Field(default="anonymous", description="Azure Entra ID object ID")
+    drug_name: str | None = Field(default=None)
+    target_market: str | None = Field(default=None)
+    priority: int | None = Field(default=None, ge=1, le=10)
+
+    @model_validator(mode="after")
+    def validate_payload(self) -> CreateSessionRequest:
+        if self.query.strip() and len(self.query.strip()) >= 10:
+            return self
+        if self.drug_name and len(self.drug_name.strip()) >= 2:
+            return self
+        raise ValueError("Provide either a detailed query (>=10 chars) or a valid drug_name")
 
 
 class TaskNodeResponse(BaseModel):
@@ -162,8 +174,17 @@ class SessionStatusResponse(BaseModel):
 # ── Endpoints ──────────────────────────────────────────────
 
 
-@app.post("/api/v1/sessions", response_model=CreateSessionResponse, status_code=201, dependencies=[Depends(rate_limiter)])
-async def create_session(request: CreateSessionRequest, req: Request) -> CreateSessionResponse:
+@app.post(
+    "/api/v1/sessions",
+    response_model=CreateSessionResponse,
+    status_code=201,
+    dependencies=[Depends(rate_limiter)],
+)
+async def create_session(
+    request: CreateSessionRequest,
+    req: Request,
+    authenticated_user: str = Depends(require_authenticated_user),
+) -> CreateSessionResponse:
     """
     Create a new query session.
 
@@ -177,16 +198,24 @@ async def create_session(request: CreateSessionRequest, req: Request) -> CreateS
     correlation_id = req.headers.get("x-correlation-id", str(uuid4()))
 
     try:
+        effective_query = request.query
+
+        # MCP compatibility: if only structured fields are provided,
+        # synthesize an execution query for decomposition.
+        if not effective_query.strip() and request.drug_name:
+            market = request.target_market or "global"
+            effective_query = f"Analyze {request.drug_name} market entry strategy in {market}"
+
         # 1. Decompose intent
         query_params, tasks = _decomposer.decompose(
-            query=request.query,
+            query=effective_query,
             session_id=session_id,
         )
 
         # 2. Publish to Service Bus
         session = _publisher.publish(
-            query=request.query,
-            user_id=request.user_id,
+            query=effective_query,
+            user_id=authenticated_user,
             parameters=query_params,
             tasks=tasks,
             session_id=session_id,
@@ -196,10 +225,10 @@ async def create_session(request: CreateSessionRequest, req: Request) -> CreateS
         # 3. Audit the query submission
         _audit.log(
             session_id=session_id,
-            user_id=request.user_id,
+            user_id=authenticated_user,
             agent_type=AgentType.PLANNER,
             action=AuditAction.QUERY_SUBMITTED,
-            payload={"query": request.query},
+            payload={"query": effective_query},
             ip_address=req.client.host if req.client else None,
             correlation_id=correlation_id,
         )
@@ -228,7 +257,11 @@ async def create_session(request: CreateSessionRequest, req: Request) -> CreateS
 
 
 @app.get("/api/v1/sessions/{session_id}", response_model=SessionStatusResponse)
-async def get_session(session_id: str) -> SessionStatusResponse:
+async def get_session(
+    session_id: str,
+    req: Request,
+    authenticated_user: str = Depends(require_authenticated_user),
+) -> SessionStatusResponse:
     """Get the current status of a query session."""
     if not _cosmos:
         raise HTTPException(status_code=503, detail="Service not ready")
@@ -241,6 +274,9 @@ async def get_session(session_id: str) -> SessionStatusResponse:
         else:
             session = _cosmos.get_session(session_id)
             cache.cache_session(session_id, session.model_dump(mode="json"))
+
+        if session.user_id != authenticated_user and not is_admin_request(req):
+            raise HTTPException(status_code=403, detail="Access denied for session")
 
         return SessionStatusResponse(
             session_id=session.id,
@@ -265,6 +301,8 @@ async def get_session(session_id: str) -> SessionStatusResponse:
             created_at=session.created_at.isoformat(),
             updated_at=session.updated_at.isoformat(),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to get session", extra={"session_id": session_id})
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from e
@@ -272,15 +310,20 @@ async def get_session(session_id: str) -> SessionStatusResponse:
 
 @app.get("/api/v1/sessions")
 async def list_sessions(
+    req: Request,
     drug_name: str = Query(default=""),
     user_id: str = Query(default=""),
     status: str = Query(default=""),
     limit: int = Query(default=10, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    authenticated_user: str = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
     """List sessions with optional filters and pagination."""
     if not _cosmos:
         raise HTTPException(status_code=503, detail="Service not ready")
+
+    if not is_admin_request(req):
+        user_id = authenticated_user
 
     sessions, total = _cosmos.list_sessions(
         drug_name=drug_name,
@@ -312,13 +355,17 @@ async def list_sessions(
 @app.get("/api/v1/sessions/{session_id}/report")
 async def get_session_report(
     session_id: str,
+    req: Request,
     format: str = Query(default="pdf"),
+    authenticated_user: str = Depends(require_authenticated_user),
 ) -> dict[str, Any]:
     """Fetch report payload or URL for a completed session."""
     if not _cosmos:
         raise HTTPException(status_code=503, detail="Service not ready")
 
     session = _cosmos.get_session(session_id)
+    if session.user_id != authenticated_user and not is_admin_request(req):
+        raise HTTPException(status_code=403, detail="Access denied for session")
     requested_format = format.lower()
 
     if requested_format == "pdf":
@@ -361,6 +408,7 @@ async def get_session_report(
 async def list_audit(
     limit: int = Query(default=100, ge=1, le=500),
     session_id: str = Query(default=""),
+    _: str = Depends(require_admin_user),
 ) -> dict[str, Any]:
     """List recent audit entries for admin UI / diagnostics."""
     if not _cosmos:
@@ -371,7 +419,7 @@ async def list_audit(
 
 
 @app.get("/metrics/agents")
-async def get_agent_metrics() -> dict[str, Any]:
+async def get_agent_metrics(_: str = Depends(require_admin_user)) -> dict[str, Any]:
     """Compute lightweight agent metrics from recent sessions."""
     if not _cosmos:
         raise HTTPException(status_code=503, detail="Service not ready")
@@ -389,7 +437,7 @@ async def get_agent_metrics() -> dict[str, Any]:
             bucket["total_latency_ms"] += int(result.execution_time_ms)
             bucket["total_invocations"] += 1
 
-            has_error = any(k.endswith("_error") for k in result.findings.keys())
+            has_error = any(k.endswith("_error") for k in result.findings)
             if not has_error:
                 bucket["success_count"] += 1
 

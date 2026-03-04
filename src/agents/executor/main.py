@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 
 from src.agents.executor.chart_generator import (
     generate_patent_timeline,
@@ -23,6 +23,7 @@ from src.agents.executor.pdf_engine import PDFEngine
 from src.agents.executor.report_generator import ReportGenerator
 from src.shared.bootstrap import bootstrap_agent
 from src.shared.infra.audit import AuditService
+from src.shared.infra.auth import require_internal_api_key
 from src.shared.infra.cosmos_client import CosmosDBClient
 from src.shared.models.enums import AgentType, AuditAction, PillarType, SessionStatus
 from src.shared.models.schemas import Session
@@ -176,7 +177,10 @@ async def health_check() -> dict[str, str]:
 
 
 @app.post("/api/v1/sessions/{session_id}/execute")
-async def execute_session(session_id: str) -> dict[str, Any]:
+async def execute_session(
+    session_id: str,
+    _: None = Depends(require_internal_api_key),
+) -> dict[str, Any]:
     if _executor is None:
         raise HTTPException(status_code=503, detail="Service not ready")
     try:

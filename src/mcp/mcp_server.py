@@ -43,8 +43,9 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from mcp.server.fastmcp import Context, FastMCP
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,7 @@ class GetSessionInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     session_id: str = Field(..., min_length=36, max_length=36,
                             description="Session UUID (36-char format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)")
+    user_id: str = Field(default="mcp_user", description="User identifier for access-scoped session reads")
 
 
 class ListSessionsInput(BaseModel):
@@ -182,6 +184,7 @@ class GetReportInput(BaseModel):
     session_id: str = Field(..., min_length=36, max_length=36,
                             description="Session UUID to retrieve report for")
     format: str = Field(default="pdf", description="Report format: 'pdf', 'json', 'summary'")
+    user_id: str = Field(default="mcp_user", description="User identifier for access-scoped report reads")
 
 
 # ── Tools ─────────────────────────────────────────────────
@@ -282,7 +285,10 @@ async def pharma_get_session(params: GetSessionInput, ctx: Context) -> str:
     """
     try:
         http = _get_http()
-        resp = await http.get(f"/api/v1/sessions/{params.session_id}")
+        resp = await http.get(
+            f"/api/v1/sessions/{params.session_id}",
+            headers={"X-User-Id": params.user_id},
+        )
         resp.raise_for_status()
         data = resp.json()
 
@@ -348,7 +354,11 @@ async def pharma_list_sessions(params: ListSessionsInput) -> str:
         if params.status:
             query_params["status"] = params.status
 
-        resp = await http.get("/api/v1/sessions", params=query_params)
+        resp = await http.get(
+            "/api/v1/sessions",
+            params=query_params,
+            headers={"X-User-Id": params.user_id},
+        )
         resp.raise_for_status()
         data = resp.json()
 
@@ -602,6 +612,7 @@ async def pharma_get_report(params: GetReportInput) -> str:
         resp = await http.get(
             f"/api/v1/sessions/{params.session_id}/report",
             params={"format": params.format},
+            headers={"X-User-Id": params.user_id},
         )
         resp.raise_for_status()
         data = resp.json()
