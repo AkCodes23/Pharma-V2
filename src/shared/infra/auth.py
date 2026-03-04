@@ -45,11 +45,16 @@ def require_internal_api_key(request: Request) -> None:
     """
     Validate service-to-service API key when configured.
 
-    If PHARMA_INTERNAL_API_KEY is unset, auth is skipped for local/dev compatibility.
+    If PHARMA_INTERNAL_API_KEY is unset in development/test, auth is skipped for local/dev compatibility.
+    In non-dev environments, a missing key is treated as a server misconfiguration and fails closed.
     """
     expected = os.getenv("PHARMA_INTERNAL_API_KEY", "")
     if not expected:
-        return
+        if _is_dev_mode():
+            # In dev/test, allow running without configuring an internal API key.
+            return
+        # In non-dev environments, fail closed if the internal API key is not configured.
+        raise HTTPException(status_code=500, detail="Internal API key is not configured")
 
     supplied = request.headers.get("X-API-Key", "")
     if not supplied or not secrets.compare_digest(supplied, expected):

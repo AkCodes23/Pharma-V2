@@ -113,6 +113,12 @@ app.add_middleware(
 instrument_fastapi(app)
 
 
+# ── Constants ─────────────────────────────────────────────
+
+# Minimum characters for a query to be considered sufficiently detailed for
+# direct decomposition without requiring structured drug_name/target_market fields.
+_MIN_QUERY_LENGTH = 10
+
 # ── Request/Response Models ────────────────────────────────
 
 
@@ -127,7 +133,7 @@ class CreateSessionRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self) -> CreateSessionRequest:
-        if self.query.strip() and len(self.query.strip()) >= 10:
+        if self.query.strip() and len(self.query.strip()) >= _MIN_QUERY_LENGTH:
             return self
         if self.drug_name and len(self.drug_name.strip()) >= 2:
             return self
@@ -198,11 +204,11 @@ async def create_session(
     correlation_id = req.headers.get("x-correlation-id", str(uuid4()))
 
     try:
-        effective_query = request.query
+        effective_query = request.query.strip()
 
-        # MCP compatibility: if only structured fields are provided,
-        # synthesize an execution query for decomposition.
-        if not effective_query.strip() and request.drug_name:
+        # MCP compatibility: if only structured fields are provided, or query is too
+        # short to be meaningful, synthesize an execution query for decomposition.
+        if (not effective_query or len(effective_query) < _MIN_QUERY_LENGTH) and request.drug_name:
             market = request.target_market or "global"
             effective_query = f"Analyze {request.drug_name} market entry strategy in {market}"
 
@@ -301,6 +307,8 @@ async def get_session(
             created_at=session.created_at.isoformat(),
             updated_at=session.updated_at.isoformat(),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to get session", extra={"session_id": session_id})
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}") from e
