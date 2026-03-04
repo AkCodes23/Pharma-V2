@@ -11,11 +11,12 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 
 from src.agents.supervisor.validator import GroundingValidator
 from src.shared.bootstrap import bootstrap_agent
 from src.shared.infra.audit import AuditService
+from src.shared.infra.auth import require_internal_api_key
 from src.shared.infra.cosmos_client import CosmosDBClient
 from src.shared.models.enums import AgentType, AuditAction, SessionStatus, TaskStatus
 
@@ -145,7 +146,10 @@ async def health_check() -> dict[str, str]:
 
 
 @app.post("/api/v1/sessions/{session_id}/validate")
-async def validate_session(session_id: str) -> dict[str, object]:
+async def validate_session(
+    session_id: str,
+    _: None = Depends(require_internal_api_key),
+) -> dict[str, object]:
     if _supervisor is None or _cosmos is None:
         raise HTTPException(status_code=503, detail="Service not ready")
 

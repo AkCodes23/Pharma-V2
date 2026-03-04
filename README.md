@@ -34,6 +34,13 @@ Current routing conventions:
   - `retriever-knowledge-sub`
   - `retriever-news-sub`
 
+Broker mode contract:
+- **Service Bus mode (default):** Planner/retreivers use Azure Service Bus `*-tasks` topics.
+- **Kafka/Event Hubs mode (analytics/eventing):** Kafka topics use `pharma.tasks.*` and `pharma.events.*`.
+- Avoid mixed runtime assumptions in a single deployment. If `KAFKA_USE_EVENT_HUBS=true`, configure
+  `KAFKA_EVENT_HUBS_CONNECTION_STRING`; retriever task consumption still relies on Service Bus unless
+  explicitly migrated.
+
 ## 2. Repository Structure
 
 - `src/agents/planner/`: Planner FastAPI app and decomposition/publishing flow

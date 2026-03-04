@@ -194,9 +194,12 @@ class CosmosDBClient:
 
                 for task in session.task_graph:
                     if task.task_id == task_id:
+                        previous_status = task.status
                         task.status = status
                         if error_message:
                             task.error_message = error_message
+                        if status == TaskStatus.RETRYING and previous_status != TaskStatus.RETRYING:
+                            task.retry_count = min(task.retry_count + 1, 3)
                         if status == TaskStatus.COMPLETED:
                             task.completed_at = datetime.now(timezone.utc)
                         break

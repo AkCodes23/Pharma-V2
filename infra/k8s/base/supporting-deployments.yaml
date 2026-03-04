@@ -31,6 +31,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           resources:
             requests:
               cpu: "250m"
@@ -71,6 +73,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           resources:
             requests:
               cpu: "200m"
@@ -114,6 +118,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           resources:
             requests:
               cpu: "200m"
@@ -169,6 +175,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           resources:
             requests:
               cpu: "500m"
@@ -211,6 +219,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           resources:
             requests:
               cpu: "100m"
@@ -248,6 +258,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: pharma-config
+            - secretRef:
+                name: pharma-ai-secrets
           resources:
             requests:
               cpu: "200m"

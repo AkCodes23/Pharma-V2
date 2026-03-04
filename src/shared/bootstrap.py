@@ -19,12 +19,30 @@ lifespan function, before accessing any config values.
 from __future__ import annotations
 
 import logging
-import os
 
-from src.shared.config import get_settings, Settings
-from src.shared.infra.keyvault_resolver import resolve_secrets_from_keyvault, get_missing_secrets
+from src.shared.config import Settings, get_settings
+from src.shared.infra.keyvault_resolver import get_missing_secrets, resolve_secrets_from_keyvault
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_broker_mode(settings: Settings, agent_name: str) -> None:
+    """Fail fast on incompatible message-bus mode configuration."""
+    kafka_cfg = settings.kafka
+    servicebus_cfg = settings.servicebus
+
+    if kafka_cfg.use_event_hubs and not kafka_cfg.event_hubs_connection_string:
+        raise RuntimeError(
+            f"Agent '{agent_name}' has KAFKA_USE_EVENT_HUBS=true but "
+            "KAFKA_EVENT_HUBS_CONNECTION_STRING is missing."
+        )
+
+    if kafka_cfg.use_event_hubs and servicebus_cfg.connection_string:
+        logger.warning(
+            "Both Kafka(Event Hubs) and Service Bus credentials are configured. "
+            "Retriever runtime currently consumes from Service Bus; verify deployment mode.",
+            extra={"agent": agent_name},
+        )
 
 
 def bootstrap_agent(
@@ -64,6 +82,7 @@ def bootstrap_agent(
 
     # Step 2: Load settings (Pydantic picks up env vars including KV-injected ones)
     settings = get_settings()
+    _validate_broker_mode(settings, agent_name)
 
     # Step 3: Validate critical secrets
     is_production = settings.app.env.lower() in ("production", "prod", "staging")
