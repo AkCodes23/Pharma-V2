@@ -1,5 +1,7 @@
 # Pharma Agentic AI
 
+Demo seperate branch
+
 Distributed multi-agent platform for pharmaceutical market intelligence. The system decomposes a user query into pillar-specific tasks, executes deterministic retrieval tools, validates grounding, and produces a final decision report.
 
 This repository currently supports:
