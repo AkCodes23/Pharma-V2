@@ -14,12 +14,11 @@ Architecture context:
 
 from __future__ import annotations
 
-import io
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from src.shared.config import get_settings
+from src.shared.bootstrap.providers import create_object_store
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +29,6 @@ PDF_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-
   :root {{
     --bg: #0a0e1a;
     --card: #0f1629;
@@ -278,7 +275,7 @@ class PDFEngine:
     """
 
     def __init__(self) -> None:
-        self._settings = get_settings()
+        self._object_store = create_object_store()
 
     def render_pdf(
         self,
@@ -344,49 +341,30 @@ class PDFEngine:
 
     def upload_to_blob(self, pdf_bytes: bytes, session_id: str) -> str:
         """
-        Upload PDF to Azure Blob Storage.
+        Upload PDF to configured object storage.
 
         Args:
             pdf_bytes: The rendered PDF content.
-            session_id: Used as the blob name prefix.
+            session_id: Used as the object key prefix.
 
         Returns:
-            Blob URL string.
+            Object URL string.
         """
         try:
-            from azure.storage.blob import BlobServiceClient
-        except ImportError:
-            logger.warning("azure-storage-blob not available — skipping upload")
-            return f"/local/reports/{session_id}.pdf"
-
-        blob_name = f"reports/{session_id}/{session_id}_executive_report.pdf"
-
-        try:
-            client = BlobServiceClient.from_connection_string(
-                self._settings.blob_storage_connection_string
+            self._object_store.ensure_ready()
+            object_url = self._object_store.upload_bytes(
+                session_id=session_id,
+                filename=f"{session_id}_executive_report.pdf",
+                payload=pdf_bytes,
+                content_type="application/pdf",
             )
-            container = client.get_container_client(
-                self._settings.blob_storage_reports_container
-            )
-            blob = container.get_blob_client(blob_name)
-            blob.upload_blob(
-                pdf_bytes,
-                overwrite=True,
-                content_settings={
-                    "content_type": "application/pdf",
-                    "content_disposition": f"inline; filename={session_id}_report.pdf",
-                },
-            )
-
-            blob_url = blob.url
             logger.info(
-                "PDF uploaded to Blob Storage",
-                extra={"blob_url": blob_url, "size": len(pdf_bytes)},
+                "PDF uploaded to object storage",
+                extra={"object_url": object_url, "size": len(pdf_bytes)},
             )
-            return blob_url
-
+            return object_url
         except Exception:
-            logger.exception("Blob upload failed")
+            logger.exception("Object storage upload failed")
             return f"/local/reports/{session_id}.pdf"
 
     def _markdown_to_html(self, md: str) -> str:

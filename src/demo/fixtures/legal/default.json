@@ -1,0 +1,18 @@
+{
+  "findings": {
+    "blocking_patents": [],
+    "earliest_generic_entry": null,
+    "orange_book_results": [],
+    "regional_patents": [],
+    "legal_summary": "No deterministic legal blockers detected in default fixture."
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Legal",
+      "source_url": "local://fixtures/legal/default",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "c489f4af86c6846f7164dbe2a02861dd1ee03af2f7126bf06c49f7f84a47d049",
+      "excerpt": "Default legal fixture response."
+    }
+  ]
+}

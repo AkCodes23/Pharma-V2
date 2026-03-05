@@ -1,108 +1,61 @@
-# ============================================================
-# Pharma Agentic AI — Docker Compose (Production-Grade Local Stack)
-# ============================================================
-#
-# Usage:
-#   docker compose up -d              Start all services
-#   docker compose up -d --build      Rebuild and start
-#   docker compose logs -f planner    Follow planner logs
-#   docker compose down -v            Stop and remove volumes
-#
-# Architecture:
-#   planner (FastAPI:8000) → kafka → retrievers → postgres/redis → supervisor → executor
-#   celery-worker handles PDF gen, RAG indexing, analytics
-#   celery-beat schedules periodic tasks (RAG re-index, stale session cleanup)
-#
-# ============================================================
-
-x-python-service: &python-service
-  build:
-    context: .
-    dockerfile: Dockerfile
-  env_file: .env
-  restart: unless-stopped
-  depends_on:
-    redis:
-      condition: service_healthy
-    postgres:
-      condition: service_healthy
-    kafka:
-      condition: service_healthy
-  environment:
-    - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
-  networks:
-    - pharma-net
-
 services:
-  # ── Infrastructure Services ──────────────────────────────
-
-  redis:
-    image: redis:7-alpine
-    container_name: pharma-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    command: >
-      redis-server
-        --maxmemory 256mb
-        --maxmemory-policy allkeys-lru
-        --save 60 1000
-        --appendonly yes
-        --requirepass ${REDIS_PASSWORD:-pharma_redis_2026}
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-pharma_redis_2026}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - pharma-net
-
   postgres:
     image: postgres:16-alpine
     container_name: pharma-postgres
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: pharma_ai
       POSTGRES_USER: pharma
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pharma_pg_2026}
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=en_US.utf8 --lc-ctype=en_US.utf8"
+      POSTGRES_PASSWORD: pharma_pg_2026
+    ports:
+      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pharma -d pharma_ai"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     networks:
-      - pharma-net
+      - pharma-demo
+
+  redis:
+    image: redis:7-alpine
+    container_name: pharma-redis
+    command: ["redis-server", "--save", "60", "1000", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - pharma-demo
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: pharma-zookeeper
-    ports:
-      - "2181:2181"
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    volumes:
-      - zookeeper-data:/var/lib/zookeeper/data
     healthcheck:
-      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      test: ["CMD", "bash", "-c", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
     networks:
-      - pharma-net
+      - pharma-demo
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: pharma-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"
-      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -113,14 +66,6 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      KAFKA_LOG_RETENTION_HOURS: 168  # 7 days
-      KAFKA_LOG_SEGMENT_BYTES: 1073741824  # 1GB
-      KAFKA_NUM_PARTITIONS: 5
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"]
       interval: 15s
@@ -128,7 +73,7 @@ services:
       retries: 10
       start_period: 30s
     networks:
-      - pharma-net
+      - pharma-demo
 
   kafka-init:
     image: confluentinc/cp-kafka:7.6.0
@@ -139,314 +84,278 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command: |
       "
-      echo 'Creating Kafka topics...'
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.legal
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.clinical
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.commercial
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.social
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.knowledge
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 5 --replication-factor 1 --topic pharma.tasks.news
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.events.sessions
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.events.audit
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.events.analytics
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 1 --replication-factor 1 --topic pharma.dlq
-      echo 'All topics created.'
-      kafka-topics --list --bootstrap-server kafka:29092
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.tasks.legal
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.tasks.clinical
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.tasks.commercial
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.tasks.social
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.tasks.knowledge
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic pharma.tasks.news
       "
     networks:
-      - pharma-net
+      - pharma-demo
 
-  # ── Monitoring & Admin ───────────────────────────────────
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: pharma-kafka-ui
-    ports:
-      - "8080:8080"
+  minio:
+    image: minio/minio:RELEASE.2025-02-18T16-25-55Z
+    container_name: pharma-minio
+    command: server /data --console-address ":9001"
     environment:
-      KAFKA_CLUSTERS_0_NAME: pharma-local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
-    depends_on:
-      kafka:
-        condition: service_healthy
-    networks:
-      - pharma-net
-
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    container_name: pharma-jaeger
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     ports:
-      - "16686:16686"    # Jaeger UI
-      - "4317:4317"      # OTLP gRPC receiver
-      - "4318:4318"      # OTLP HTTP receiver
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686/"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - pharma-net
-
-  neo4j:
-    image: neo4j:5-community
-    container_name: pharma-neo4j
-    ports:
-      - "7474:7474"    # Neo4j Browser
-      - "7687:7687"    # Bolt protocol
-    environment:
-      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-pharma_neo4j_2026}"
-      NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_server_memory_heap_max__size: "512m"
+      - "9000:9000"
+      - "9001:9001"
     volumes:
-      - neo4j-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+      - minio-data:/data
     networks:
-      - pharma-net
+      - pharma-demo
 
-  postgres-backup:
-    image: prodrigestivill/postgres-backup-local:16
-    container_name: pharma-postgres-backup
-    restart: unless-stopped
+  minio-init:
+    image: minio/mc:RELEASE.2025-02-15T10-36-16Z
+    container_name: pharma-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      until mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin}; do sleep 1; done
+      mc mb --ignore-existing local/${MINIO_BUCKET:-reports}
+      "
+    networks:
+      - pharma-demo
+
+  planner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pharma-planner
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_DB: pharma_ai
-      POSTGRES_USER: pharma
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pharma_pg_2026}
-      SCHEDULE: "@daily"
-      BACKUP_KEEP_DAYS: 7
-      BACKUP_KEEP_WEEKS: 4
-      BACKUP_KEEP_MONTHS: 0
-      HEALTHCHECK_PORT: 8088
-    volumes:
-      - pg-backups:/backups
-    networks:
-      - pharma-net
-
-  # ── Application Services ─────────────────────────────────
-
-  planner:
-    <<: *python-service
-    container_name: pharma-planner
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      supervisor:
+        condition: service_started
+      executor:
+        condition: service_started
+    command: uvicorn src.agents.planner.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
-    command: >
-      uvicorn src.agents.planner.main:app
-        --host 0.0.0.0
-        --port 8000
-        --workers 2
-        --log-level info
-        --access-log
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
-      interval: 30s
+      interval: 20s
       timeout: 5s
-      retries: 3
-      start_period: 15s
-    environment:
-      - SERVICE_NAME=planner-agent
-      - AGENT_ROLE=planner
+      retries: 10
+    networks:
+      - pharma-demo
 
   supervisor:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-supervisor
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    command: uvicorn src.agents.supervisor.main:app --host 0.0.0.0 --port 8001
     ports:
       - "8001:8001"
-    command: >
-      uvicorn src.agents.supervisor.main:app
-        --host 0.0.0.0
-        --port 8001
-        --workers 1
-        --log-level info
-    environment:
-      - SERVICE_NAME=supervisor-agent
-      - AGENT_ROLE=supervisor
-      - PORT=8001
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health').raise_for_status()"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    networks:
+      - pharma-demo
 
   executor:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-executor
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    command: uvicorn src.agents.executor.main:app --host 0.0.0.0 --port 8002
     ports:
       - "8002:8002"
-    command: >
-      uvicorn src.agents.executor.main:app
-        --host 0.0.0.0
-        --port 8002
-        --workers 1
-        --log-level info
-    environment:
-      - SERVICE_NAME=executor-agent
-      - AGENT_ROLE=executor
-      - PORT=8002
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8002/health').raise_for_status()"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+    networks:
+      - pharma-demo
 
   retriever-legal:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-retriever-legal
+    env_file:
+      - .env
     command: python -m src.agents.retrievers.legal.main
     environment:
-      - SERVICE_NAME=retriever-legal
-      - AGENT_MODULE=legal
-      - PORT=8080
-      - SERVICE_BUS_SUBSCRIPTION=retriever-legal-sub
+      SERVICE_BUS_SUBSCRIPTION: retriever-legal-sub
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - pharma-demo
 
   retriever-clinical:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-retriever-clinical
+    env_file:
+      - .env
     command: python -m src.agents.retrievers.clinical.main
     environment:
-      - SERVICE_NAME=retriever-clinical
-      - AGENT_MODULE=clinical
-      - PORT=8080
-      - SERVICE_BUS_SUBSCRIPTION=retriever-clinical-sub
+      SERVICE_BUS_SUBSCRIPTION: retriever-clinical-sub
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - pharma-demo
 
   retriever-commercial:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-retriever-commercial
+    env_file:
+      - .env
     command: python -m src.agents.retrievers.commercial.main
     environment:
-      - SERVICE_NAME=retriever-commercial
-      - AGENT_MODULE=commercial
-      - PORT=8080
-      - SERVICE_BUS_SUBSCRIPTION=retriever-commercial-sub
+      SERVICE_BUS_SUBSCRIPTION: retriever-commercial-sub
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - pharma-demo
 
   retriever-social:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-retriever-social
+    env_file:
+      - .env
     command: python -m src.agents.retrievers.social.main
     environment:
-      - SERVICE_NAME=retriever-social
-      - AGENT_MODULE=social
-      - PORT=8080
-      - SERVICE_BUS_SUBSCRIPTION=retriever-social-sub
+      SERVICE_BUS_SUBSCRIPTION: retriever-social-sub
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - pharma-demo
 
   retriever-knowledge:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-retriever-knowledge
+    env_file:
+      - .env
     command: python -m src.agents.retrievers.knowledge.main
     environment:
-      - SERVICE_NAME=retriever-knowledge
-      - AGENT_MODULE=knowledge
-      - PORT=8080
-      - SERVICE_BUS_SUBSCRIPTION=retriever-knowledge-sub
+      SERVICE_BUS_SUBSCRIPTION: retriever-knowledge-sub
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - pharma-demo
 
   retriever-news:
-    <<: *python-service
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pharma-retriever-news
+    env_file:
+      - .env
     command: python -m src.agents.retrievers.news.main
     environment:
-      - SERVICE_NAME=retriever-news
-      - AGENT_MODULE=news
-      - PORT=8080
-      - SERVICE_BUS_SUBSCRIPTION=retriever-news-sub
-
-  pharma-mcp:
-    <<: *python-service
-    container_name: pharma-mcp
-    # Streamable HTTP transport on port 8010
-    command: python src/mcp/mcp_server.py http
-    ports:
-      - "8010:8010"
-    environment:
-      - SERVICE_NAME=pharma-mcp
-      - PLANNER_URL=http://planner:8000
-      - PHARMA_INTERNAL_API_KEY=${PHARMA_INTERNAL_API_KEY:-dev-internal-key}
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 8010), 2); s.close()"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-
-  # ── Background Workers ───────────────────────────────────
-
-  celery-worker:
-    <<: *python-service
-    container_name: pharma-celery-worker
-    command: >
-      celery -A src.shared.infra.celery_app worker
-        --loglevel=info
-        --concurrency=4
-        --queues=pharma.pdf,pharma.rag,pharma.analytics,celery
-        --max-tasks-per-child=100
-        --without-heartbeat
-    environment:
-      - SERVICE_NAME=celery-worker
-      - C_FORCE_ROOT=1
-
-  celery-beat:
-    <<: *python-service
-    container_name: pharma-celery-beat
-    command: >
-      celery -A src.shared.infra.celery_app beat
-        --loglevel=info
-        --schedule=/tmp/celerybeat-schedule
-    environment:
-      - SERVICE_NAME=celery-beat
-      - C_FORCE_ROOT=1
-
-  # ── Quality & Enhancement Agents (A2A) ───────────────────
-
-  quality-evaluator:
-    <<: *python-service
-    container_name: pharma-quality-evaluator
-    command: python -m src.agents.quality_evaluator.main
-    environment:
-      - SERVICE_NAME=quality-evaluator
-      - AGENT_ROLE=quality_evaluator
-      - PORT=8080
-
-  prompt-enhancer:
-    <<: *python-service
-    container_name: pharma-prompt-enhancer
-    command: python -m src.agents.prompt_enhancer.main
-    environment:
-      - SERVICE_NAME=prompt-enhancer
-      - AGENT_ROLE=prompt_enhancer
-      - PORT=8080
-
-  # ── Frontend ─────────────────────────────────────────────
+      SERVICE_BUS_SUBSCRIPTION: retriever-news-sub
+      PORT: 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - pharma-demo
 
   frontend:
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
     container_name: pharma-frontend
-    ports:
-      - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://planner:8000
-      - NEXT_PUBLIC_WS_URL=ws://planner:8000/ws
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000/ws
     depends_on:
       planner:
         condition: service_healthy
+    ports:
+      - "3000:3000"
     networks:
-      - pharma-net
+      - pharma-demo
 
 volumes:
-  redis-data:
-    driver: local
   postgres-data:
-    driver: local
-  zookeeper-data:
-    driver: local
-  kafka-data:
-    driver: local
-  pg-backups:
-    driver: local
-  neo4j-data:
-    driver: local
+  redis-data:
+  minio-data:
 
 networks:
-  pharma-net:
+  pharma-demo:
     driver: bridge
-    name: pharma-network

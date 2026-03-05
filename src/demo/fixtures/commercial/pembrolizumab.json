@@ -1,0 +1,22 @@
+{
+  "findings": {
+    "market_data": {
+      "total_addressable_market_usd": 2100000000,
+      "market_growth_cagr_pct": 12.3
+    },
+    "revenue_data": {
+      "peak_sales_usd": 28500000000,
+      "peak_year": 2025
+    },
+    "market_attractiveness": "HIGH"
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Commercial",
+      "source_url": "local://fixtures/commercial/pembrolizumab",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "ec89b9bce44848a9f3f632abf3f22d90de7f5fe8ce3521742dc3ea4ea96d7742",
+      "excerpt": "Pembrolizumab commercial fixture indicates high TAM and high growth."
+    }
+  ]
+}

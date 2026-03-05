@@ -1,0 +1,40 @@
+{
+  "findings": {
+    "news_articles": [
+      {
+        "title": "Checkpoint inhibitor price-pressure commentary in India",
+        "url": "local://fixtures/news/pembrolizumab/article-1",
+        "score": 0.84
+      }
+    ],
+    "press_releases": [
+      {
+        "title": "Local oncology partnership expansion",
+        "url": "local://fixtures/news/pembrolizumab/release-1",
+        "score": 0.79
+      }
+    ],
+    "ma_deals": [
+      {
+        "type": "licensing",
+        "counterparty": "Regional Oncology Distributor",
+        "status": "rumored"
+      }
+    ],
+    "key_signals": [
+      {
+        "type": "ma_activity",
+        "summary": "One possible licensing pathway identified in fixture data"
+      }
+    ]
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - News",
+      "source_url": "local://fixtures/news/pembrolizumab",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "3adf98d6fd3acde742de39765be056f403a44f7c8ce60c43150fa7cb09dbf37b",
+      "excerpt": "Deterministic market-signal fixture for pembrolizumab."
+    }
+  ]
+}

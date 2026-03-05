@@ -1,0 +1,62 @@
+{
+  "query_parameters": {
+    "drug_name": "Semaglutide",
+    "brand_name": "Ozempic",
+    "target_market": "US",
+    "time_horizon": "2027",
+    "therapeutic_area": "Diabetes",
+    "additional_context": "Assess US launch and competition outlook."
+  },
+  "tasks": [
+    {
+      "pillar": "LEGAL",
+      "description": "Assess Semaglutide patent and exclusivity constraints for US market entry timeline.",
+      "parameters": {
+        "drug_name": "Semaglutide",
+        "brand_name": "Ozempic",
+        "target_market": "US"
+      }
+    },
+    {
+      "pillar": "CLINICAL",
+      "description": "Review US clinical trial pipeline and outcome maturity for Semaglutide.",
+      "parameters": {
+        "drug_name": "Semaglutide",
+        "target_market": "US"
+      }
+    },
+    {
+      "pillar": "COMMERCIAL",
+      "description": "Estimate US diabetes market potential and competitive intensity for Semaglutide.",
+      "parameters": {
+        "drug_name": "Semaglutide",
+        "therapeutic_area": "Diabetes",
+        "target_market": "US"
+      }
+    },
+    {
+      "pillar": "SOCIAL",
+      "description": "Evaluate FAERS and publication-derived safety-risk posture for Semaglutide.",
+      "parameters": {
+        "drug_name": "Semaglutide",
+        "target_market": "US"
+      }
+    },
+    {
+      "pillar": "KNOWLEDGE",
+      "description": "Retrieve internal reimbursement and launch context for Semaglutide in US.",
+      "parameters": {
+        "drug_name": "Semaglutide",
+        "target_market": "US"
+      }
+    },
+    {
+      "pillar": "NEWS",
+      "description": "Summarize recent Semaglutide policy, pricing, and partnership developments in US.",
+      "parameters": {
+        "drug_name": "Semaglutide",
+        "target_market": "US"
+      }
+    }
+  ]
+}

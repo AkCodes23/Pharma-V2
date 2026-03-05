@@ -23,7 +23,7 @@ from src.agents.retrievers.legal.tools import (
 
 if TYPE_CHECKING:
     from src.shared.infra.audit import AuditService
-    from src.shared.infra.cosmos_client import CosmosDBClient
+    from src.shared.ports.session_store import SessionStore
 
 
 class LegalRetriever(BaseRetriever):
@@ -31,7 +31,7 @@ class LegalRetriever(BaseRetriever):
 
     def __init__(
         self,
-        cosmos: CosmosDBClient,
+        cosmos: SessionStore,
         audit: AuditService,
         subscription_name: str = "retriever-legal-sub",
     ) -> None:
@@ -123,3 +123,4 @@ app = create_retriever_app(
 
 if __name__ == "__main__":
     run_retriever_service(app)
+

@@ -1,0 +1,61 @@
+{
+  "query_parameters": {
+    "drug_name": "Unknown",
+    "brand_name": null,
+    "target_market": "Global",
+    "time_horizon": "2027",
+    "therapeutic_area": "General Medicine",
+    "additional_context": "Standalone offline fixture decomposition"
+  },
+  "tasks": [
+    {
+      "pillar": "LEGAL",
+      "description": "Assess patent expiry and exclusivity constraints for Unknown in Global.",
+      "parameters": {
+        "drug_name": "Unknown",
+        "target_market": "Global"
+      }
+    },
+    {
+      "pillar": "CLINICAL",
+      "description": "Assess active clinical pipeline and phase maturity for Unknown.",
+      "parameters": {
+        "drug_name": "Unknown",
+        "target_market": "Global"
+      }
+    },
+    {
+      "pillar": "COMMERCIAL",
+      "description": "Estimate market attractiveness and revenue potential for Unknown.",
+      "parameters": {
+        "drug_name": "Unknown",
+        "therapeutic_area": "General Medicine",
+        "target_market": "Global"
+      }
+    },
+    {
+      "pillar": "SOCIAL",
+      "description": "Assess safety and regulatory risk signals for Unknown.",
+      "parameters": {
+        "drug_name": "Unknown",
+        "target_market": "Global"
+      }
+    },
+    {
+      "pillar": "KNOWLEDGE",
+      "description": "Retrieve internal knowledge snippets related to Unknown strategic planning.",
+      "parameters": {
+        "drug_name": "Unknown",
+        "target_market": "Global"
+      }
+    },
+    {
+      "pillar": "NEWS",
+      "description": "Summarize relevant news/deal signals for Unknown in Global market.",
+      "parameters": {
+        "drug_name": "Unknown",
+        "target_market": "Global"
+      }
+    }
+  ]
+}

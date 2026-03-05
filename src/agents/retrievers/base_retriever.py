@@ -34,11 +34,13 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
+from src.demo.fixture_loader import get_fixture_loader
+from src.shared.bootstrap.providers import create_task_consumer
+from src.shared.config import get_settings
 from src.shared.infra.audit import AuditService
-from src.shared.infra.cosmos_client import CosmosDBClient
-from src.shared.infra.servicebus_client import ServiceBusConsumer
 from src.shared.models.enums import AgentType, AuditAction, PillarType, TaskStatus
 from src.shared.models.schemas import AgentResult, Citation, ServiceBusMessage, TaskNode
+from src.shared.ports.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -189,16 +191,14 @@ class BaseRetriever(ABC):
 
     def __init__(
         self,
-        cosmos: CosmosDBClient,
+        cosmos: SessionStore,
         audit: AuditService,
         subscription_name: str = "default",
     ) -> None:
         self._cosmos = cosmos
         self._audit = audit
-        self._consumer = ServiceBusConsumer(
-            pillar=self.pillar,
-            subscription_name=subscription_name,
-        )
+        self._consumer = create_task_consumer(self.pillar, subscription_name)
+        self._settings = get_settings()
         self._circuit_breaker = CircuitBreaker(
             failure_threshold=3,
             cooldown_seconds=60.0,
@@ -329,7 +329,10 @@ class BaseRetriever(ABC):
             self._rag_context = self._augment_with_rag(task, session_id)
 
             # 2. Execute deterministic tools (with timeout)
-            findings, citations = self._execute_with_timeout(task)
+            if self._settings.demo_offline:
+                findings, citations = self._load_offline_fixture(task)
+            else:
+                findings, citations = self._execute_with_timeout(task)
             execution_time_ms = int((time.monotonic() - start_time) * 1000)
 
             # 3. Calculate confidence based on citation coverage
@@ -457,10 +460,12 @@ class BaseRetriever(ABC):
             Formatted context string (may be empty if no relevant prior knowledge).
         """
         import asyncio as _asyncio
-        from src.shared.config import get_settings
 
         try:
-            cfg = get_settings().rag
+            if self._settings.demo_offline:
+                return ""
+
+            cfg = self._settings.rag
             if not cfg.enable_rag_augmentation:
                 return ""
 
@@ -509,12 +514,19 @@ class BaseRetriever(ABC):
             )
             return ""
 
+    def _load_offline_fixture(self, task: TaskNode) -> tuple[dict[str, Any], list[Citation]]:
+        """Load deterministic fixture output for this retriever and task."""
+        findings, raw_citations = get_fixture_loader().load_retriever_output(self.pillar, task)
+        citations = [Citation.model_validate(item) for item in raw_citations]
+        return findings, citations
+
     def start(self) -> None:
         """Start the consumption loop."""
         logger.info("Starting retriever agent", extra={"agent_type": self.agent_type})
+        prefetch_count = int(getattr(self._consumer, "PREFETCH_COUNT", 10))
         self._consumer.consume(
             handler=self.handle_message,
-            max_messages=self._consumer.PREFETCH_COUNT,
+            max_messages=prefetch_count,
         )
 
     def stop(self) -> None:

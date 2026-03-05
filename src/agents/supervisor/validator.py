@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 
 from src.shared.config import get_settings
+from src.shared.infra.network_guard import assert_url_allowed_for_demo
 from src.shared.models.enums import ConflictSeverity, PillarType
 from src.shared.models.schemas import AgentResult, Citation, ConflictDetail, ValidationResult
 
@@ -65,6 +66,7 @@ class GroundingValidator:
 
     def __init__(self) -> None:
         settings = get_settings()
+        self._demo_offline = settings.demo_offline
         self._endpoint = settings.openai.endpoint.rstrip("/")
         self._api_key = settings.openai.api_key
         self._deployment = settings.openai.deployment_name
@@ -102,24 +104,25 @@ class GroundingValidator:
         conflicts = self._detect_rule_based_conflicts(agent_results)
 
         # ── Pass 3: LLM-based semantic validation ──────────
-        try:
-            llm_result = self._llm_validation(agent_results)
-            if llm_result.get("conflicts"):
-                for c in llm_result["conflicts"]:
-                    conflicts.append(ConflictDetail(
-                        conflict_type=c.get("conflict_type", "UNKNOWN"),
-                        pillars_involved=[PillarType(p) for p in c.get("pillars_involved", [])],
-                        description=c.get("description", ""),
-                        severity=ConflictSeverity(c.get("severity", "MEDIUM")),
-                        recommendation=c.get("recommendation", ""),
-                    ))
+        if not self._demo_offline:
+            try:
+                llm_result = self._llm_validation(agent_results)
+                if llm_result.get("conflicts"):
+                    for c in llm_result["conflicts"]:
+                        conflicts.append(ConflictDetail(
+                            conflict_type=c.get("conflict_type", "UNKNOWN"),
+                            pillars_involved=[PillarType(p) for p in c.get("pillars_involved", [])],
+                            description=c.get("description", ""),
+                            severity=ConflictSeverity(c.get("severity", "MEDIUM")),
+                            recommendation=c.get("recommendation", ""),
+                        ))
 
-            # Update grounding score from LLM assessment
-            llm_grounding = llm_result.get("grounding_score", grounding_score)
-            grounding_score = min(grounding_score, llm_grounding)
+                # Update grounding score from LLM assessment
+                llm_grounding = llm_result.get("grounding_score", grounding_score)
+                grounding_score = min(grounding_score, llm_grounding)
 
-        except Exception:
-            logger.exception("LLM validation failed, using rule-based results only")
+            except Exception:
+                logger.exception("LLM validation failed, using rule-based results only")
 
         is_valid = grounding_score >= 0.8 and not any(
             c.severity == ConflictSeverity.CRITICAL for c in conflicts
@@ -208,6 +211,7 @@ class GroundingValidator:
             f"{self._endpoint}/openai/deployments/{self._deployment}"
             f"/chat/completions?api-version={self._api_version}"
         )
+        assert_url_allowed_for_demo(url)
 
         response = self._http_client.post(
             url,

@@ -1,0 +1,23 @@
+{
+  "findings": {
+    "news_articles": [],
+    "press_releases": [],
+    "ma_deals": [],
+    "key_signals": [
+      {
+        "type": "news",
+        "title": "No major strategic signals in default fixture",
+        "url": "local://fixtures/news/default"
+      }
+    ]
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - News",
+      "source_url": "local://fixtures/news/default",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "b7d53f56f3505c2a266b4d6e58b0cd28f7c6348b3243e56f6f5a9f0ce9ff85ac",
+      "excerpt": "Default market-signal fixture response."
+    }
+  ]
+}

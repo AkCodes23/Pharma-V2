@@ -1,0 +1,20 @@
+{
+  "findings": {
+    "adverse_events": [],
+    "safety_score": {
+      "risk_level": "LOW",
+      "total_events": 0,
+      "serious_pct": 0.0
+    },
+    "regulatory_risk": "LOW"
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Social",
+      "source_url": "local://fixtures/social/default",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "f9f10f8db7bf413403e9ab7fca17a7d666dd03ff0b22ea5ef67d1ec4d6e58a4d",
+      "excerpt": "Default social fixture response."
+    }
+  ]
+}

@@ -16,11 +16,8 @@ Architecture context:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from src.shared.infra.audit import AuditService
-from src.shared.infra.cosmos_client import CosmosDBClient
-from src.shared.infra.servicebus_client import ServiceBusPublisher
 from src.shared.models.enums import AgentType, AuditAction, SessionStatus
 from src.shared.models.schemas import (
     QueryParameters,
@@ -28,6 +25,8 @@ from src.shared.models.schemas import (
     Session,
     TaskNode,
 )
+from src.shared.ports.session_store import SessionStore
+from src.shared.ports.task_bus import TaskBusPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +43,8 @@ class TaskPublisher:
 
     def __init__(
         self,
-        cosmos: CosmosDBClient,
-        servicebus: ServiceBusPublisher,
+        cosmos: SessionStore,
+        servicebus: TaskBusPublisher,
         audit: AuditService,
     ) -> None:
         self._cosmos = cosmos

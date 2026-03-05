@@ -1,20 +1,4 @@
-"""
-Pharma Agentic AI — Agent Bootstrap Module.
-
-Provides a shared bootstrap sequence for all agent services.
-Ensures Key Vault secrets are resolved BEFORE config loads,
-telemetry is initialized, and startup is validated.
-
-Architecture context:
-  - Service: Shared infrastructure (bootstrap layer)
-  - Responsibility: Ordered startup initialization
-  - Upstream: Azure Key Vault, environment variables
-  - Downstream: All agent main modules
-  - Failure: Fail-fast on missing critical secrets (production)
-
-Call `bootstrap_agent()` as the FIRST action in every agent's
-lifespan function, before accessing any config values.
-"""
+"""Agent bootstrap module."""
 
 from __future__ import annotations
 
@@ -27,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_broker_mode(settings: Settings, agent_name: str) -> None:
-    """Fail fast on incompatible message-bus mode configuration."""
     kafka_cfg = settings.kafka
     servicebus_cfg = settings.servicebus
 
@@ -40,7 +23,7 @@ def _validate_broker_mode(settings: Settings, agent_name: str) -> None:
     if kafka_cfg.use_event_hubs and servicebus_cfg.connection_string:
         logger.warning(
             "Both Kafka(Event Hubs) and Service Bus credentials are configured. "
-            "Retriever runtime currently consumes from Service Bus; verify deployment mode.",
+            "Verify selected task bus provider for this deployment.",
             extra={"agent": agent_name},
         )
 
@@ -49,30 +32,10 @@ def bootstrap_agent(
     agent_name: str = "unknown",
     fail_on_missing_secrets: bool | None = None,
 ) -> Settings:
-    """
-    Shared bootstrap sequence for all Pharma AI agents.
+    """Shared bootstrap sequence for all services."""
 
-    Execution order:
-      1. Resolve secrets from Azure Key Vault (if KEY_VAULT_URL set)
-      2. Load validated settings via Pydantic BaseSettings
-      3. Check for missing critical secrets
-      4. Initialize telemetry (OpenTelemetry + Azure Monitor)
-
-    Args:
-        agent_name: Human-readable agent identifier for logging.
-        fail_on_missing_secrets: If True, raise on missing critical secrets.
-            Defaults to True in production, False in development.
-
-    Returns:
-        Validated Settings object with all config loaded.
-
-    Raises:
-        RuntimeError: In production mode, if critical secrets are missing
-            after Key Vault resolution.
-    """
     logger.info("Bootstrapping agent: %s", agent_name)
 
-    # Step 1: Resolve secrets from Key Vault (injects into os.environ)
     resolved = resolve_secrets_from_keyvault()
     if resolved:
         logger.info(
@@ -80,34 +43,36 @@ def bootstrap_agent(
             extra={"agent": agent_name, "count": len(resolved)},
         )
 
-    # Step 2: Load settings (Pydantic picks up env vars including KV-injected ones)
     settings = get_settings()
+    settings.validate_startup()
     _validate_broker_mode(settings, agent_name)
 
-    # Step 3: Validate critical secrets
     is_production = settings.app.env.lower() in ("production", "prod", "staging")
     should_fail = fail_on_missing_secrets if fail_on_missing_secrets is not None else is_production
 
-    missing = get_missing_secrets()
+    missing: list[str] = []
+    if not settings.provider.is_standalone_demo:
+        missing = get_missing_secrets()
+
     if missing and should_fail:
         raise RuntimeError(
             f"Agent '{agent_name}' cannot start: missing critical secrets: {missing}. "
-            f"Ensure KEY_VAULT_URL is set and secrets are seeded in Key Vault."
+            "Ensure KEY_VAULT_URL is set and secrets are seeded in Key Vault."
         )
-    elif missing:
+    if missing:
         logger.warning(
-            "Non-critical secret gaps detected (development mode)",
+            "Non-critical secret gaps detected",
             extra={"agent": agent_name, "missing": missing},
         )
 
-    # Step 4: Initialize telemetry
     try:
         from src.shared.infra.telemetry import setup_telemetry
+
         setup_telemetry(settings)
         logger.info("Telemetry initialized", extra={"agent": agent_name})
     except Exception:
         logger.warning(
-            "Telemetry initialization failed — continuing without observability",
+            "Telemetry initialization failed - continuing without observability",
             extra={"agent": agent_name},
             exc_info=True,
         )
@@ -117,6 +82,7 @@ def bootstrap_agent(
         extra={
             "agent": agent_name,
             "environment": settings.app.env,
+            "app_mode": settings.provider.app_mode,
             "kv_secrets_resolved": len(resolved),
             "missing_secrets": len(missing),
         },

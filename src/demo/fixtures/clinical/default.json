@@ -1,0 +1,23 @@
+{
+  "findings": {
+    "active_trials": [
+      {
+        "nct_id": "NCT-DEMO-0001",
+        "status": "RECRUITING",
+        "phase": "PHASE2"
+      }
+    ],
+    "phase3_trials": [],
+    "total_active_trial_count": 1,
+    "competitive_saturation": "LOW"
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Clinical",
+      "source_url": "local://fixtures/clinical/default",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "9e2fa5f42759ff9d9f9ef423e2cc4f4f8bf8664036ca2f335f0476f5f1646b1b",
+      "excerpt": "Default clinical fixture response."
+    }
+  ]
+}

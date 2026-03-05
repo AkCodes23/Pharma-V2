@@ -1,0 +1,29 @@
+{
+  "findings": {
+    "search_query": "pembrolizumab india internal launch context",
+    "internal_documents": [
+      {
+        "doc_id": "ONC-INDIA-2027-01",
+        "title": "India Oncology Tender Access Notes",
+        "summary": "Public oncology channel access usually requires 12-month pharmacovigilance readiness before launch.",
+        "relevance": 0.91
+      },
+      {
+        "doc_id": "BIO-PORTFOLIO-14",
+        "title": "Checkpoint Inhibitor Portfolio Benchmark",
+        "summary": "Pembrolizumab class requires differentiated value communication for rapid adoption.",
+        "relevance": 0.88
+      }
+    ],
+    "document_count": 2
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Knowledge",
+      "source_url": "local://fixtures/knowledge/pembrolizumab",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "cf3f2410326d8f9a4ef6cb41d3694ca2d57f94467aa1c8d83dcb66e5cf84703f",
+      "excerpt": "Deterministic internal strategy notes for pembrolizumab."
+    }
+  ]
+}

@@ -1,54 +1,47 @@
-# Pharma Agentic AI — Multi-stage Dockerfile
-# Builds all Python services (Planner, Supervisor, Executor, Retriever Worker)
-# Single Dockerfile with build target selection.
+# syntax=docker/dockerfile:1
 
-# ── Base stage ────────────────────────────────────────────
-FROM python:3.12-slim AS base
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-# OS-level dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir .
+COPY pyproject.toml README.md ./
+COPY src ./src
 
-# Copy application code
-COPY src/ ./src/
+RUN python -m pip install --upgrade pip && \
+    python -m pip install --prefix=/install .
 
-# Non-root user for security
-RUN useradd --create-home appuser
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcairo2 \
+    libpango-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libffi8 \
+    shared-mime-info \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /install /usr/local
+COPY src ./src
+COPY pyproject.toml README.md ./
+
+RUN useradd --create-home --uid 10001 appuser && \
+    chown -R appuser:appuser /app
+
 USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
-
-# ── Planner Agent ─────────────────────────────────────────
-FROM base AS planner
 ENV PORT=8000
 EXPOSE 8000
+
 CMD ["uvicorn", "src.agents.planner.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-# ── Supervisor Agent ──────────────────────────────────────
-FROM base AS supervisor
-ENV PORT=8001
-EXPOSE 8001
-CMD ["uvicorn", "src.agents.supervisor.main:app", "--host", "0.0.0.0", "--port", "8001"]
-
-# ── Executor Agent ────────────────────────────────────────
-FROM base AS executor
-ENV PORT=8002
-EXPOSE 8002
-CMD ["uvicorn", "src.agents.executor.main:app", "--host", "0.0.0.0", "--port", "8002"]
-
-# ── Retriever Worker ──────────────────────────────────────
-FROM base AS retriever-worker
-ENV AGENT_MODULE=legal
-ENV PORT=8080
-EXPOSE 8080
-CMD ["/bin/sh", "-c", "python -m src.agents.retrievers.${AGENT_MODULE}.main"]

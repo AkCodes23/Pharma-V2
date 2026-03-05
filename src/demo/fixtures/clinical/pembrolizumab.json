@@ -1,0 +1,35 @@
+{
+  "findings": {
+    "active_trials": [
+      {
+        "nct_id": "NCT-PBRO-1001",
+        "status": "RECRUITING",
+        "phase": "PHASE3"
+      },
+      {
+        "nct_id": "NCT-PBRO-1002",
+        "status": "ACTIVE_NOT_RECRUITING",
+        "phase": "PHASE3"
+      }
+    ],
+    "phase3_trials": [
+      {
+        "nct_id": "NCT-PBRO-1001"
+      },
+      {
+        "nct_id": "NCT-PBRO-1002"
+      }
+    ],
+    "total_active_trial_count": 2,
+    "competitive_saturation": "LOW"
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Clinical",
+      "source_url": "local://fixtures/clinical/pembrolizumab",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "33480cf1ce38804c4d8cbf62aa9683f2c20bfdf3f94f9b6a8d2a12bf4c55db20",
+      "excerpt": "Pembrolizumab clinical fixture with two late-phase studies."
+    }
+  ]
+}

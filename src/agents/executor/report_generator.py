@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 
 from src.shared.config import get_settings
+from src.shared.infra.network_guard import assert_url_allowed_for_demo
 from src.shared.models.enums import ConflictSeverity, DecisionOutcome, PillarType
 from src.shared.models.schemas import AgentResult, ConflictDetail, Session, ValidationResult
 
@@ -93,6 +94,7 @@ class ReportGenerator:
             f"{self._endpoint}/openai/deployments/{self._deployment}"
             f"/chat/completions?api-version={self._api_version}"
         )
+        assert_url_allowed_for_demo(url)
 
         response = self._http_client.post(
             url,

@@ -19,8 +19,8 @@ from fastapi import FastAPI
 
 from src.agents.retrievers.base_retriever import BaseRetriever
 from src.shared.bootstrap import bootstrap_agent
+from src.shared.bootstrap.providers import create_session_store
 from src.shared.infra.audit import AuditService
-from src.shared.infra.cosmos_client import CosmosDBClient
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +44,12 @@ def create_retriever_app(
 
         bootstrap_agent(agent_name=agent_name)
 
-        cosmos = CosmosDBClient()
-        cosmos.ensure_containers()
-        audit = AuditService(cosmos)
+        session_store = create_session_store()
+        session_store.ensure_containers()
+        audit = AuditService(session_store)
 
         subscription_name = os.getenv("SERVICE_BUS_SUBSCRIPTION", default_subscription)
-        retriever = retriever_cls(cosmos=cosmos, audit=audit, subscription_name=subscription_name)
+        retriever = retriever_cls(cosmos=session_store, audit=audit, subscription_name=subscription_name)
 
         worker_thread = threading.Thread(
             target=retriever.start,

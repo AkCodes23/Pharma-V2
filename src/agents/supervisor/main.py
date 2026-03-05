@@ -15,10 +15,11 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from src.agents.supervisor.validator import GroundingValidator
 from src.shared.bootstrap import bootstrap_agent
+from src.shared.bootstrap.providers import create_session_store
 from src.shared.infra.audit import AuditService
 from src.shared.infra.auth import require_internal_api_key
-from src.shared.infra.cosmos_client import CosmosDBClient
 from src.shared.models.enums import AgentType, AuditAction, SessionStatus, TaskStatus
+from src.shared.ports.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 class SupervisorAgent:
     """Quality gate between retrieval and synthesis."""
 
-    def __init__(self, cosmos: CosmosDBClient, audit: AuditService) -> None:
+    def __init__(self, cosmos: SessionStore, audit: AuditService) -> None:
         self._cosmos = cosmos
         self._audit = audit
         self._validator = GroundingValidator()
@@ -107,7 +108,7 @@ class SupervisorAgent:
         self._validator.close()
 
 
-_cosmos: CosmosDBClient | None = None
+_cosmos: SessionStore | None = None
 _audit: AuditService | None = None
 _supervisor: SupervisorAgent | None = None
 
@@ -118,7 +119,7 @@ async def lifespan(app: FastAPI):
     global _cosmos, _audit, _supervisor
 
     bootstrap_agent(agent_name="supervisor-agent")
-    _cosmos = CosmosDBClient()
+    _cosmos = create_session_store()
     _cosmos.ensure_containers()
     _audit = AuditService(_cosmos)
     _supervisor = SupervisorAgent(_cosmos, _audit)

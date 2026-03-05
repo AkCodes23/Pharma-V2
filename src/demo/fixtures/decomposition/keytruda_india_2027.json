@@ -1,0 +1,62 @@
+{
+  "query_parameters": {
+    "drug_name": "Pembrolizumab",
+    "brand_name": "Keytruda",
+    "target_market": "India",
+    "time_horizon": "2027",
+    "therapeutic_area": "Oncology",
+    "additional_context": "Evaluate generic launch viability for 2027."
+  },
+  "tasks": [
+    {
+      "pillar": "LEGAL",
+      "description": "Determine whether blocking patents prevent Pembrolizumab generic launch in India by 2027.",
+      "parameters": {
+        "drug_name": "Pembrolizumab",
+        "brand_name": "Keytruda",
+        "target_market": "India"
+      }
+    },
+    {
+      "pillar": "CLINICAL",
+      "description": "Map active and near-term late-phase trials for Pembrolizumab in India-relevant indications.",
+      "parameters": {
+        "drug_name": "Pembrolizumab",
+        "target_market": "India"
+      }
+    },
+    {
+      "pillar": "COMMERCIAL",
+      "description": "Estimate India TAM and generic market attractiveness for Pembrolizumab by 2027.",
+      "parameters": {
+        "drug_name": "Pembrolizumab",
+        "therapeutic_area": "Oncology",
+        "target_market": "India"
+      }
+    },
+    {
+      "pillar": "SOCIAL",
+      "description": "Assess adverse-event driven regulatory risk for Pembrolizumab market entry.",
+      "parameters": {
+        "drug_name": "Pembrolizumab",
+        "target_market": "India"
+      }
+    },
+    {
+      "pillar": "KNOWLEDGE",
+      "description": "Retrieve internal oncology launch playbook context for Pembrolizumab.",
+      "parameters": {
+        "drug_name": "Pembrolizumab",
+        "target_market": "India"
+      }
+    },
+    {
+      "pillar": "NEWS",
+      "description": "Summarize latest strategic signals (deals, launches, policy) relevant to Pembrolizumab in India.",
+      "parameters": {
+        "drug_name": "Pembrolizumab",
+        "target_market": "India"
+      }
+    }
+  ]
+}

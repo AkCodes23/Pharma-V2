@@ -1,0 +1,26 @@
+{
+  "findings": {
+    "adverse_events": [
+      {
+        "report_id": "FAERS-PBRO-0001",
+        "serious": 1,
+        "seriousness_death": 0
+      }
+    ],
+    "safety_score": {
+      "risk_level": "MEDIUM",
+      "total_events": 100,
+      "serious_pct": 15.0
+    },
+    "regulatory_risk": "MEDIUM"
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Social",
+      "source_url": "local://fixtures/social/pembrolizumab",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "b4cbf5e2784b8ccad3e6c64d7b1be8029ad7131cb7f7c79f8c4de6e95f3a2f90",
+      "excerpt": "Pembrolizumab social fixture reflects medium safety risk."
+    }
+  ]
+}

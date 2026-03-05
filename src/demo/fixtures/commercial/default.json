@@ -1,0 +1,22 @@
+{
+  "findings": {
+    "market_data": {
+      "total_addressable_market_usd": 600000000,
+      "market_growth_cagr_pct": 7.5
+    },
+    "revenue_data": {
+      "peak_sales_usd": 1200000000,
+      "peak_year": 2027
+    },
+    "market_attractiveness": "MEDIUM"
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Commercial",
+      "source_url": "local://fixtures/commercial/default",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "a8bf6050e13774a45d7c04302df13657e68f0316f0d3c74d0f37e64bca8a6444",
+      "excerpt": "Default commercial fixture response."
+    }
+  ]
+}

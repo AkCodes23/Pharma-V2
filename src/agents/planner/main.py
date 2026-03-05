@@ -26,15 +26,19 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
-from src.agents.planner.decomposer import IntentDecomposer
+from src.agents.planner.orchestrator import PlannerOrchestrator
 from src.agents.planner.publisher import TaskPublisher
+from src.shared.bootstrap.providers import (
+    create_decomposition_engine,
+    create_session_store,
+    create_task_publisher,
+)
 from src.shared.infra.audit import AuditService
 from src.shared.infra.auth import is_admin_request, require_admin_user, require_authenticated_user
 from src.shared.infra.cache_middleware import get_session_cache
-from src.shared.infra.cosmos_client import CosmosDBClient
+from src.shared.infra.demo_auth import DemoAuthMiddleware
 from src.shared.infra.rate_limit import rate_limiter
 from src.shared.infra.redis_client import RedisClient
-from src.shared.infra.servicebus_client import ServiceBusPublisher
 from src.shared.infra.telemetry import instrument_fastapi
 from src.shared.infra.websocket import (
     start_websocket_manager,
@@ -43,34 +47,42 @@ from src.shared.infra.websocket import (
 )
 from src.shared.models.enums import AgentType, AuditAction
 from src.shared.models.schemas import Session
+from src.shared.ports.decomposition_engine import DecompositionEngine
+from src.shared.ports.session_store import SessionStore
+from src.shared.ports.task_bus import TaskBusPublisher
 
 logger = logging.getLogger(__name__)
 
 # ── Globals (initialized in lifespan) ──────────────────────
-_cosmos: CosmosDBClient | None = None
+_cosmos: SessionStore | None = None
 _publisher: TaskPublisher | None = None
-_decomposer: IntentDecomposer | None = None
+_decomposer: DecompositionEngine | None = None
 _redis: RedisClient | None = None
 _audit: AuditService | None = None
+_task_bus_publisher: TaskBusPublisher | None = None
+_orchestrator: PlannerOrchestrator | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle: initialize and cleanup resources."""
-    global _cosmos, _publisher, _decomposer, _redis, _audit
+    global _cosmos, _publisher, _decomposer, _redis, _audit, _task_bus_publisher, _orchestrator
 
     # Bootstrap: Key Vault → config → telemetry (ordered)
     from src.shared.bootstrap import bootstrap_agent
-    bootstrap_agent(agent_name="planner-agent")
+    settings = bootstrap_agent(agent_name="planner-agent")
 
     # Initialize infrastructure
-    _cosmos = CosmosDBClient()
+    _cosmos = create_session_store()
     _cosmos.ensure_containers()
     _redis = RedisClient()
-    servicebus = ServiceBusPublisher()
+    _task_bus_publisher = create_task_publisher()
     _audit = AuditService(_cosmos)
-    _publisher = TaskPublisher(_cosmos, servicebus, _audit)
-    _decomposer = IntentDecomposer()
+    _publisher = TaskPublisher(_cosmos, _task_bus_publisher, _audit)
+    _decomposer = create_decomposition_engine()
+    if settings.provider.is_standalone_demo:
+        _orchestrator = PlannerOrchestrator(_cosmos, _redis)
+        await _orchestrator.start()
     await start_websocket_manager()
 
     logger.info("Planner Agent started")
@@ -80,10 +92,14 @@ async def lifespan(app: FastAPI):
     await stop_websocket_manager()
     if _decomposer:
         _decomposer.close()
+    if _orchestrator:
+        await _orchestrator.stop()
     if _audit:
         _audit.shutdown()
-    servicebus.close()
-    _redis.close()
+    if _task_bus_publisher:
+        _task_bus_publisher.close()
+    if _redis:
+        _redis.close()
     logger.info("Planner Agent stopped")
 
 
@@ -100,13 +116,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(DemoAuthMiddleware)
+
 # CORS for frontend — restricted origins (no wildcard in production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Correlation-ID"],
+    allow_headers=["Content-Type", "Authorization", "X-Correlation-ID", "X-Demo-User", "X-User-Role"],
 )
 
 # OpenTelemetry instrumentation
@@ -120,7 +138,7 @@ class CreateSessionRequest(BaseModel):
     """Request body for creating a new query session."""
 
     query: str = Field(default="", max_length=2000, description="Natural-language strategic query")
-    user_id: str = Field(default="anonymous", description="Azure Entra ID object ID")
+    user_id: str | None = Field(default=None, description="User identifier")
     drug_name: str | None = Field(default=None)
     target_market: str | None = Field(default=None)
     priority: int | None = Field(default=None, ge=1, le=10)
@@ -199,6 +217,7 @@ async def create_session(
 
     try:
         effective_query = request.query
+        effective_user_id = request.user_id or authenticated_user
 
         # MCP compatibility: if only structured fields are provided,
         # synthesize an execution query for decomposition.
@@ -215,7 +234,7 @@ async def create_session(
         # 2. Publish to Service Bus
         session = _publisher.publish(
             query=effective_query,
-            user_id=authenticated_user,
+            user_id=effective_user_id,
             parameters=query_params,
             tasks=tasks,
             session_id=session_id,
@@ -225,7 +244,7 @@ async def create_session(
         # 3. Audit the query submission
         _audit.log(
             session_id=session_id,
-            user_id=authenticated_user,
+            user_id=effective_user_id,
             agent_type=AgentType.PLANNER,
             action=AuditAction.QUERY_SUBMITTED,
             payload={"query": effective_query},

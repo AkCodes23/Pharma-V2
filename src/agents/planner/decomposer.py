@@ -23,6 +23,7 @@ import httpx
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.shared.config import get_settings
+from src.shared.infra.network_guard import assert_url_allowed_for_demo
 from src.shared.models.enums import PillarType
 from src.shared.models.schemas import QueryParameters, TaskNode
 
@@ -105,6 +106,7 @@ class IntentDecomposer:
             f"{self._endpoint}/openai/deployments/{self._deployment}"
             f"/chat/completions?api-version={self._api_version}"
         )
+        assert_url_allowed_for_demo(url)
 
         response = self._http_client.post(
             url,

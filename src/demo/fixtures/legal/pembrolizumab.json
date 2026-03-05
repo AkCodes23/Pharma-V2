@@ -1,0 +1,36 @@
+{
+  "findings": {
+    "drug_name": "Pembrolizumab",
+    "target_market": "India",
+    "blocking_patents": [
+      {
+        "patent_number": "IN-087254",
+        "expiry_date": "2028-03-15",
+        "patent_type": "Compound Patent"
+      }
+    ],
+    "earliest_generic_entry": "2028-03-15",
+    "orange_book_results": [
+      {
+        "application_number": "NDA-125514",
+        "brand_name": "KEYTRUDA"
+      }
+    ],
+    "regional_patents": [
+      {
+        "application_number": "IN-087254",
+        "title": "Anti-PD-1 antibody formulation",
+        "status": "Active"
+      }
+    ]
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Legal",
+      "source_url": "local://fixtures/legal/pembrolizumab",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "3f89eeb501cbaf3e91ec15c7825ce532f6ba57f9cdf11259f9bd4025f6eb09d7",
+      "excerpt": "Pembrolizumab legal fixture includes blocking patent beyond 2027."
+    }
+  ]
+}

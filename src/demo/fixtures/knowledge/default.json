@@ -1,0 +1,23 @@
+{
+  "findings": {
+    "search_query": "default internal strategy context",
+    "internal_documents": [
+      {
+        "doc_id": "INT-PLAYBOOK-001",
+        "title": "Generic Entry Governance Checklist",
+        "summary": "Default launch controls for legal, clinical, and commercial readiness.",
+        "relevance": 0.78
+      }
+    ],
+    "document_count": 1
+  },
+  "citations": [
+    {
+      "source_name": "Standalone Fixture - Knowledge",
+      "source_url": "local://fixtures/knowledge/default",
+      "retrieved_at": "2026-01-01T00:00:00+00:00",
+      "data_hash": "e5e0bd8ffb1590d8cd7ef78d8f8b86d5e4d4d3fb7b7ac4e205d5f6fd4f296f25",
+      "excerpt": "Default internal playbook context."
+    }
+  ]
+}

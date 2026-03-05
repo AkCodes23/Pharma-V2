@@ -20,13 +20,14 @@ from src.agents.executor.chart_generator import (
     generate_safety_gauge,
 )
 from src.agents.executor.pdf_engine import PDFEngine
-from src.agents.executor.report_generator import ReportGenerator
 from src.shared.bootstrap import bootstrap_agent
+from src.shared.bootstrap.providers import create_report_engine, create_session_store
 from src.shared.infra.audit import AuditService
 from src.shared.infra.auth import require_internal_api_key
-from src.shared.infra.cosmos_client import CosmosDBClient
 from src.shared.models.enums import AgentType, AuditAction, PillarType, SessionStatus
 from src.shared.models.schemas import Session
+from src.shared.ports.report_engine import ReportEngine
+from src.shared.ports.session_store import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,10 @@ logger = logging.getLogger(__name__)
 class ExecutorAgent:
     """Final synthesis and artifact generation."""
 
-    def __init__(self, cosmos: CosmosDBClient, audit: AuditService) -> None:
+    def __init__(self, cosmos: SessionStore, audit: AuditService) -> None:
         self._cosmos = cosmos
         self._audit = audit
-        self._report_gen = ReportGenerator()
+        self._report_gen: ReportEngine = create_report_engine()
         self._pdf_engine = PDFEngine()
 
     def execute(self, session_id: str) -> dict[str, Any]:
@@ -139,7 +140,7 @@ class ExecutorAgent:
         self._report_gen.close()
 
 
-_cosmos: CosmosDBClient | None = None
+_cosmos: SessionStore | None = None
 _audit: AuditService | None = None
 _executor: ExecutorAgent | None = None
 
@@ -149,7 +150,7 @@ async def lifespan(app: FastAPI):
     global _cosmos, _audit, _executor
 
     bootstrap_agent(agent_name="executor-agent")
-    _cosmos = CosmosDBClient()
+    _cosmos = create_session_store()
     _cosmos.ensure_containers()
     _audit = AuditService(_cosmos)
     _executor = ExecutorAgent(_cosmos, _audit)

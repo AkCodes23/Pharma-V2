@@ -1,17 +1,4 @@
-"""
-Pharma Agentic AI — Unified Configuration.
-
-Loads all configuration from environment variables with strict
-validation at startup. Uses Pydantic BaseSettings for type-safe
-configuration with clear error messages on missing values.
-
-Architecture context:
-  - Service: Shared infrastructure
-  - Responsibility: Configuration loading and validation
-  - Upstream: .env file or Azure App Settings
-  - Downstream: All agents and infrastructure services
-  - Failure: Fail-fast at startup if any required config is missing
-"""
+"""Unified runtime configuration for Pharma Agentic AI."""
 
 from __future__ import annotations
 
@@ -22,12 +9,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AzureOpenAIConfig(BaseSettings):
-    """Azure OpenAI service configuration."""
+    """Azure OpenAI configuration."""
 
     model_config = SettingsConfigDict(env_prefix="AZURE_OPENAI_")
 
-    endpoint: str = Field(..., description="Azure OpenAI endpoint URL")
-    api_key: str = Field(..., description="Azure OpenAI API key")
+    endpoint: str = Field(default="", description="Azure OpenAI endpoint URL")
+    api_key: str = Field(default="", description="Azure OpenAI API key")
     deployment_name: str = Field(default="gpt-4o", description="Model deployment name")
     api_version: str = Field(default="2024-12-01-preview", description="API version")
 
@@ -37,8 +24,8 @@ class CosmosDBConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="COSMOS_DB_")
 
-    endpoint: str = Field(..., description="Cosmos DB endpoint URL")
-    key: str = Field(..., description="Cosmos DB primary key")
+    endpoint: str = Field(default="", description="Cosmos DB endpoint URL")
+    key: str = Field(default="", description="Cosmos DB primary key")
     database_name: str = Field(default="pharma_agentic_ai")
     session_container: str = Field(default="sessions")
     audit_container: str = Field(default="audit_trail")
@@ -49,7 +36,7 @@ class ServiceBusConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="SERVICE_BUS_")
 
-    connection_string: str = Field(..., description="Service Bus connection string")
+    connection_string: str = Field(default="", description="Service Bus connection string")
     legal_topic: str = Field(default="legal-tasks")
     clinical_topic: str = Field(default="clinical-tasks")
     commercial_topic: str = Field(default="commercial-tasks")
@@ -71,42 +58,78 @@ class BlobStorageConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="BLOB_STORAGE_")
 
-    connection_string: str = Field(..., description="Blob Storage connection string")
+    connection_string: str = Field(default="", description="Blob Storage connection string")
     reports_container: str = Field(default="reports")
 
 
 class AISearchConfig(BaseSettings):
-    """Azure AI Search configuration for RAG pipeline."""
+    """Azure AI Search configuration for RAG."""
 
     model_config = SettingsConfigDict(env_prefix="AI_SEARCH_")
 
-    endpoint: str = Field(..., description="AI Search endpoint URL (https://<name>.search.windows.net)")
-    api_key: str = Field(..., description="AI Search admin API key")
-    index_prefix: str = Field(default="pharma", description="Prefix for all pillar indexes")
-    semantic_config_name: str = Field(default="pharma-semantic", description="Semantic ranker config name")
-    vector_profile_name: str = Field(default="pharma-vector-hnsw", description="HNSW vector profile name")
-    # Ingestion behaviour
-    max_batch_upsert: int = Field(default=1000, description="Max docs per AI Search upsert batch")
-    # Retrieval behaviour
-    top_k_default: int = Field(default=5, description="Default top-K for hybrid search")
-    min_reranker_score: float = Field(default=2.0, description="Minimum semantic reranker score (0-4)")
-    min_vector_score: float = Field(default=0.65, description="Minimum cosine similarity score (0-1)")
+    endpoint: str = Field(default="", description="AI Search endpoint URL")
+    api_key: str = Field(default="", description="AI Search admin API key")
+    index_prefix: str = Field(default="pharma")
+    semantic_config_name: str = Field(default="pharma-semantic")
+    vector_profile_name: str = Field(default="pharma-vector-hnsw")
+    max_batch_upsert: int = Field(default=1000)
+    top_k_default: int = Field(default=5)
+    min_reranker_score: float = Field(default=2.0)
+    min_vector_score: float = Field(default=0.65)
 
 
 class AppConfig(BaseSettings):
-    """Application-level configuration."""
+    """Application-level settings."""
 
     model_config = SettingsConfigDict(env_prefix="APP_")
 
     env: str = Field(default="development", description="Runtime environment")
     log_level: str = Field(default="INFO", description="Log level")
-    max_retries: int = Field(default=3, ge=1, le=10, description="Max retry count for agents")
-    retry_backoff_base: int = Field(default=2, description="Exponential backoff base (seconds)")
-    session_timeout_seconds: int = Field(default=600, description="Session timeout (10 min)")
-    max_agents_per_query: int = Field(default=50, description="Max concurrent agent instances")
+    max_retries: int = Field(default=3, ge=1, le=10)
+    retry_backoff_base: int = Field(default=2)
+    session_timeout_seconds: int = Field(default=600)
+    max_agents_per_query: int = Field(default=50)
 
 
-# ── New Infrastructure Configurations ──────────────────────
+class ProviderConfig(BaseSettings):
+    """Provider selection knobs for production and standalone demo modes."""
+
+    model_config = SettingsConfigDict(env_prefix="")
+
+    app_mode: str = Field(default="development", validation_alias="APP_MODE")
+    demo_offline: bool = Field(default=False, validation_alias="DEMO_OFFLINE")
+
+    data_store_provider: str = Field(default="azure_cosmos", validation_alias="DATA_STORE_PROVIDER")
+    task_bus_provider: str = Field(default="service_bus", validation_alias="TASK_BUS_PROVIDER")
+    object_store_provider: str = Field(default="azure_blob", validation_alias="OBJECT_STORE_PROVIDER")
+    llm_provider: str = Field(default="azure_openai", validation_alias="LLM_PROVIDER")
+    knowledge_provider: str = Field(default="azure_search", validation_alias="KNOWLEDGE_PROVIDER")
+    auth_mode: str = Field(default="header", validation_alias="AUTH_MODE")
+
+    supervisor_url: str = Field(
+        default="http://supervisor:8001",
+        validation_alias="SUPERVISOR_URL",
+    )
+    executor_url: str = Field(
+        default="http://executor:8002",
+        validation_alias="EXECUTOR_URL",
+    )
+
+    @property
+    def is_standalone_demo(self) -> bool:
+        return self.app_mode.lower() == "standalone_demo"
+
+
+class MinioConfig(BaseSettings):
+    """MinIO object-store configuration for standalone demo mode."""
+
+    model_config = SettingsConfigDict(env_prefix="MINIO_")
+
+    endpoint: str = Field(default="")
+    access_key: str = Field(default="")
+    secret_key: str = Field(default="")
+    bucket: str = Field(default="reports")
+    secure: bool = Field(default=False)
 
 
 class RedisConfig(BaseSettings):
@@ -114,73 +137,37 @@ class RedisConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REDIS_")
 
-    url: str = Field(
-        default="redis://:pharma_redis_2026@localhost:6379/0",
-        description="Redis connection URL (use rediss:// for Azure TLS)",
-    )
-    max_connections: int = Field(default=50, description="Max connection pool size")
-    session_cache_ttl: int = Field(default=600, description="Session cache TTL (seconds)")
-    result_cache_ttl: int = Field(default=86400, description="Agent result cache TTL (seconds)")
-    # Azure Cache for Redis
-    use_azure: bool = Field(
-        default=False,
-        description="Enable Azure Cache for Redis (TLS, Azure AD auth)",
-    )
-    azure_host: str = Field(
-        default="",
-        description="Azure Cache hostname (e.g. pharma.redis.cache.windows.net)",
-    )
-    ssl: bool = Field(default=True, description="Enable TLS (required for Azure)")
+    url: str = Field(default="redis://localhost:6379/0")
+    max_connections: int = Field(default=50)
+    session_cache_ttl: int = Field(default=600)
+    result_cache_ttl: int = Field(default=86400)
+    use_azure: bool = Field(default=False)
+    azure_host: str = Field(default="")
+    ssl: bool = Field(default=True)
 
 
 class PostgresConfig(BaseSettings):
-    """PostgreSQL / Azure DB for PostgreSQL Flexible Server configuration."""
+    """PostgreSQL configuration."""
 
     model_config = SettingsConfigDict(env_prefix="POSTGRES_")
 
-    url: str = Field(
-        default="postgresql://pharma:pharma_pg_2026@localhost:5432/pharma_ai",
-        description="PostgreSQL DSN (for Azure: host=<name>.postgres.database.azure.com)",
-    )
-    pool_size: int = Field(default=20, description="Connection pool size")
-    max_overflow: int = Field(default=10, description="Max overflow connections")
-    # Azure DB for PostgreSQL Flexible Server
-    ssl_mode: str = Field(
-        default="prefer",
-        description="SSL mode: 'prefer' (local), 'require' (Azure), 'verify-full' (strict)",
-    )
-    use_azure_ad: bool = Field(
-        default=False,
-        description="Use Azure AD token auth instead of password",
-    )
+    url: str = Field(default="postgresql://pharma:pharma_pg_2026@localhost:5432/pharma_ai")
+    pool_size: int = Field(default=20)
+    max_overflow: int = Field(default=10)
+    ssl_mode: str = Field(default="prefer")
+    use_azure_ad: bool = Field(default=False)
 
 
 class KafkaConfig(BaseSettings):
-    """Kafka / Azure Event Hubs (Kafka-compatible) configuration."""
+    """Kafka / Event Hubs (Kafka API) configuration."""
 
     model_config = SettingsConfigDict(env_prefix="KAFKA_")
 
-    bootstrap_servers: str = Field(
-        default="localhost:9092",
-        description="Kafka bootstrap servers (Event Hubs: <ns>.servicebus.windows.net:9093)",
-    )
-    schema_registry_url: str = Field(
-        default="http://localhost:8081",
-        description="Confluent Schema Registry URL",
-    )
-    # Azure Event Hubs (Kafka-compatible endpoint)
-    use_event_hubs: bool = Field(
-        default=False,
-        description="Enable Azure Event Hubs SASL/SSL mode",
-    )
-    event_hubs_connection_string: str = Field(
-        default="",
-        description="Event Hubs namespace connection string (for SASL auth)",
-    )
-    event_hubs_namespace: str = Field(
-        default="",
-        description="Event Hubs namespace FQDN (e.g. pharma-events.servicebus.windows.net)",
-    )
+    bootstrap_servers: str = Field(default="localhost:9092")
+    schema_registry_url: str = Field(default="http://localhost:8081")
+    use_event_hubs: bool = Field(default=False)
+    event_hubs_connection_string: str = Field(default="")
+    event_hubs_namespace: str = Field(default="")
 
 
 class CeleryConfig(BaseSettings):
@@ -188,14 +175,8 @@ class CeleryConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="CELERY_")
 
-    broker_url: str = Field(
-        default="redis://:pharma_redis_2026@localhost:6379/1",
-        description="Celery broker URL (Redis)",
-    )
-    result_backend: str = Field(
-        default="db+postgresql://pharma:pharma_pg_2026@localhost:5432/celery_results",
-        description="Celery result backend (PostgreSQL)",
-    )
+    broker_url: str = Field(default="redis://localhost:6379/1")
+    result_backend: str = Field(default="db+postgresql://pharma:pharma_pg_2026@localhost:5432/celery_results")
 
 
 class RAGConfig(BaseSettings):
@@ -203,126 +184,81 @@ class RAGConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="RAG_")
 
-    embedding_model: str = Field(
-        default="text-embedding-3-small",
-        description="Azure OpenAI embedding deployment name (text-embedding-3-small)",
-    )
-    chunk_size: int = Field(default=512, description="Chunk size in tokens")
-    chunk_overlap: int = Field(default=50, description="Chunk overlap in tokens")
-    top_k: int = Field(default=5, description="Number of results to return from vector search")
-    # Feature flags
-    enable_rag_augmentation: bool = Field(
-        default=True,
-        description="Enable RAG pre-tool augmentation in retrievers",
-    )
-    min_drug_name_length: int = Field(
-        default=3,
-        description="Minimum drug name length to trigger RAG lookup",
-    )
+    embedding_model: str = Field(default="text-embedding-3-small")
+    chunk_size: int = Field(default=512)
+    chunk_overlap: int = Field(default=50)
+    top_k: int = Field(default=5)
+    enable_rag_augmentation: bool = Field(default=True)
+    min_drug_name_length: int = Field(default=3)
 
 
 class TavilyConfig(BaseSettings):
-    """Tavily Web Search API configuration for News Retriever."""
+    """Tavily configuration."""
 
     model_config = SettingsConfigDict(env_prefix="TAVILY_")
 
-    api_key: str = Field(default="", description="Tavily API key")
+    api_key: str = Field(default="")
 
 
 class Neo4jConfig(BaseSettings):
-    """Neo4j Knowledge Graph configuration for GraphRAG."""
+    """Neo4j graph configuration."""
 
     model_config = SettingsConfigDict(env_prefix="NEO4J_")
 
-    bolt_url: str = Field(default="bolt://localhost:7687", description="Neo4j Bolt URL")
-    username: str = Field(default="neo4j", description="Neo4j username")
-    password: str = Field(default="pharma_neo4j_2026", description="Neo4j password")
-    pool_size: int = Field(default=20, description="Connection pool size")
+    bolt_url: str = Field(default="bolt://localhost:7687")
+    username: str = Field(default="neo4j")
+    password: str = Field(default="pharma_neo4j_2026")
+    pool_size: int = Field(default=20)
 
 
 class GremlinConfig(BaseSettings):
-    """Azure Cosmos DB Gremlin API configuration."""
+    """Cosmos Gremlin configuration."""
 
     model_config = SettingsConfigDict(env_prefix="GREMLIN_")
 
-    use_gremlin: bool = Field(
-        default=False,
-        description="Use Cosmos Gremlin instead of Neo4j",
-    )
-    endpoint: str = Field(
-        default="",
-        description="Cosmos account hostname (e.g. pharma-graph.gremlin.cosmos.azure.com)",
-    )
-    key: str = Field(default="", description="Cosmos primary key")
-    database: str = Field(default="pharma-graph", description="Gremlin database name")
-    graph: str = Field(default="entities", description="Gremlin graph (container) name")
+    use_gremlin: bool = Field(default=False)
+    endpoint: str = Field(default="")
+    key: str = Field(default="")
+    database: str = Field(default="pharma-graph")
+    graph: str = Field(default="entities")
 
 
 class AILanguageConfig(BaseSettings):
-    """Azure AI Language configuration for NER."""
+    """Azure AI Language configuration."""
 
     model_config = SettingsConfigDict(env_prefix="AI_LANGUAGE_")
 
-    endpoint: str = Field(default="", description="Azure AI Language endpoint URL")
-    api_key: str = Field(default="", description="Azure AI Language API key")
-    custom_model_project: str = Field(
-        default="",
-        description="Custom NER model project name (leave empty for built-in model)",
-    )
+    endpoint: str = Field(default="")
+    api_key: str = Field(default="")
+    custom_model_project: str = Field(default="")
 
 
 class WebPubSubConfig(BaseSettings):
-    """Azure Web PubSub configuration for real-time push."""
+    """Azure Web PubSub configuration."""
 
     model_config = SettingsConfigDict(env_prefix="WEB_PUBSUB_")
 
-    use_azure: bool = Field(
-        default=False,
-        description="Use Azure Web PubSub instead of local WebSocket",
-    )
-    connection_string: str = Field(
-        default="",
-        description="Azure Web PubSub connection string",
-    )
-    hub_name: str = Field(default="pharma-sessions", description="Web PubSub hub name")
+    use_azure: bool = Field(default=False)
+    connection_string: str = Field(default="")
+    hub_name: str = Field(default="pharma-sessions")
 
 
 class TelemetryConfig(BaseSettings):
-    """Azure Monitor / Application Insights configuration."""
+    """Telemetry configuration."""
 
     model_config = SettingsConfigDict(env_prefix="TELEMETRY_")
 
-    use_azure_monitor: bool = Field(
-        default=False,
-        description="Use Azure Monitor instead of generic OTLP/Jaeger",
-    )
-    application_insights_connection_string: str = Field(
-        default="",
-        description="Application Insights connection string (InstrumentationKey=...)",
-    )
-    log_level: str = Field(default="INFO", description="Telemetry log level")
-    sampling_ratio: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description="Trace sampling ratio (1.0 = 100%, 0.1 = 10%)",
-    )
+    use_azure_monitor: bool = Field(default=False)
+    application_insights_connection_string: str = Field(default="")
+    log_level: str = Field(default="INFO")
+    sampling_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class Settings(BaseSettings):
-    """
-    Root configuration aggregating all sub-configurations.
-
-    Usage:
-        settings = get_settings()
-        print(settings.openai.endpoint)
-        print(settings.cosmos.database_name)
-        print(settings.redis.url)
-    """
+    """Root settings object."""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Azure services (existing)
     openai: AzureOpenAIConfig = Field(default_factory=AzureOpenAIConfig)
     cosmos: CosmosDBConfig = Field(default_factory=CosmosDBConfig)
     servicebus: ServiceBusConfig = Field(default_factory=ServiceBusConfig)
@@ -330,8 +266,8 @@ class Settings(BaseSettings):
     blob: BlobStorageConfig = Field(default_factory=BlobStorageConfig)
     search: AISearchConfig = Field(default_factory=AISearchConfig)
     app: AppConfig = Field(default_factory=AppConfig)
+    provider: ProviderConfig = Field(default_factory=ProviderConfig)
 
-    # New infrastructure services
     redis: RedisConfig = Field(default_factory=RedisConfig)
     postgres: PostgresConfig = Field(default_factory=PostgresConfig)
     kafka: KafkaConfig = Field(default_factory=KafkaConfig)
@@ -343,19 +279,103 @@ class Settings(BaseSettings):
     ai_language: AILanguageConfig = Field(default_factory=AILanguageConfig)
     web_pubsub: WebPubSubConfig = Field(default_factory=WebPubSubConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    minio: MinioConfig = Field(default_factory=MinioConfig)
 
     @property
     def azure_openai(self) -> AzureOpenAIConfig:
-        """Alias for backward compatibility with RAG engine and other modules."""
         return self.openai
+
+    @property
+    def blob_storage(self) -> BlobStorageConfig:
+        return self.blob
+
+    @property
+    def blob_storage_connection_string(self) -> str:
+        return self.blob.connection_string
+
+    @property
+    def blob_storage_reports_container(self) -> str:
+        return self.blob.reports_container
+
+    @property
+    def app_mode(self) -> str:
+        return self.provider.app_mode
+
+    @property
+    def demo_offline(self) -> bool:
+        return self.provider.demo_offline
+
+    def validate_startup(self) -> None:
+        """Fail fast on missing provider-specific runtime configuration."""
+
+        missing: list[str] = []
+
+        def require(name: str, value: str) -> None:
+            if not str(value).strip():
+                missing.append(name)
+
+        p = self.provider
+
+        if p.is_standalone_demo:
+            if not p.demo_offline:
+                raise RuntimeError(
+                    "Standalone demo mode requires DEMO_OFFLINE=true to guarantee deterministic offline behavior."
+                )
+
+            if p.data_store_provider.lower() != "postgres":
+                raise RuntimeError("Standalone demo requires DATA_STORE_PROVIDER=postgres")
+            if p.task_bus_provider.lower() != "kafka":
+                raise RuntimeError("Standalone demo requires TASK_BUS_PROVIDER=kafka")
+            if p.object_store_provider.lower() != "minio":
+                raise RuntimeError("Standalone demo requires OBJECT_STORE_PROVIDER=minio")
+            if p.llm_provider.lower() not in {"fixture", "mock"}:
+                raise RuntimeError("Standalone demo requires LLM_PROVIDER=fixture")
+            if p.knowledge_provider.lower() not in {"fixture", "mock"}:
+                raise RuntimeError("Standalone demo requires KNOWLEDGE_PROVIDER=fixture")
+            if p.auth_mode.lower() != "anonymous":
+                raise RuntimeError("Standalone demo requires AUTH_MODE=anonymous")
+
+            require("POSTGRES_URL", self.postgres.url)
+            require("REDIS_URL", self.redis.url)
+            require("KAFKA_BOOTSTRAP_SERVERS", self.kafka.bootstrap_servers)
+            require("MINIO_ENDPOINT", self.minio.endpoint)
+            require("MINIO_ACCESS_KEY", self.minio.access_key)
+            require("MINIO_SECRET_KEY", self.minio.secret_key)
+            require("MINIO_BUCKET", self.minio.bucket)
+            require("SUPERVISOR_URL", p.supervisor_url)
+            require("EXECUTOR_URL", p.executor_url)
+        else:
+            if p.data_store_provider.lower() in {"azure_cosmos", "cosmos", "azure"}:
+                require("COSMOS_DB_ENDPOINT", self.cosmos.endpoint)
+                require("COSMOS_DB_KEY", self.cosmos.key)
+            if p.task_bus_provider.lower() in {"service_bus", "azure_service_bus", "azure"}:
+                require("SERVICE_BUS_CONNECTION_STRING", self.servicebus.connection_string)
+            if p.object_store_provider.lower() in {"azure_blob", "blob", "azure"}:
+                require("BLOB_STORAGE_CONNECTION_STRING", self.blob.connection_string)
+            if p.object_store_provider.lower() == "minio":
+                require("MINIO_ENDPOINT", self.minio.endpoint)
+                require("MINIO_ACCESS_KEY", self.minio.access_key)
+                require("MINIO_SECRET_KEY", self.minio.secret_key)
+                require("MINIO_BUCKET", self.minio.bucket)
+            if p.llm_provider.lower() in {"azure_openai", "azure"}:
+                require("AZURE_OPENAI_ENDPOINT", self.openai.endpoint)
+                require("AZURE_OPENAI_API_KEY", self.openai.api_key)
+            if p.knowledge_provider.lower() in {"azure_search", "search"}:
+                require("AI_SEARCH_ENDPOINT", self.search.endpoint)
+                require("AI_SEARCH_API_KEY", self.search.api_key)
+
+        if missing:
+            formatted = ", ".join(sorted(set(missing)))
+            is_prod_like = self.app.env.lower() in {"production", "prod", "staging"}
+            if p.is_standalone_demo or is_prod_like:
+                raise RuntimeError(
+                    "Missing required environment variables for selected providers: "
+                    f"{formatted}"
+                )
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """
-    Return the singleton Settings instance.
+    """Return cached settings."""
 
-    Cached to avoid re-reading env vars on every call.
-    Raises ValidationError at startup if required config is missing.
-    """
     return Settings()
