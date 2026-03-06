@@ -2,6 +2,8 @@
 
 This branch (`feature/standalone-demo`) is a demo-only runtime that preserves core workflows without Azure dependencies.
 
+DEMO only
+
 ## What Changed
 - Data store: Azure Cosmos DB -> PostgreSQL
 - Task bus: Azure Service Bus -> Kafka
