@@ -20,6 +20,7 @@ class MinioObjectStore(ObjectStore):
         self._endpoint = cfg.endpoint
         self._bucket = cfg.bucket
         self._secure = cfg.secure
+        self._public_url = cfg.public_url.rstrip("/")
         self._client = Minio(
             endpoint=self._endpoint,
             access_key=cfg.access_key,
@@ -57,5 +58,7 @@ class MinioObjectStore(ObjectStore):
             length=len(payload),
             content_type=content_type,
         )
+        if self._public_url:
+            return f"{self._public_url}/{self._bucket}/{object_name}"
         scheme = "https" if self._secure else "http"
         return f"{scheme}://{self._endpoint}/{self._bucket}/{object_name}"

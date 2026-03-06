@@ -82,15 +82,13 @@ services:
       kafka:
         condition: service_healthy
     entrypoint: ["/bin/bash", "-c"]
-    command: |
-      "
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic legal-tasks
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic clinical-tasks
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic commercial-tasks
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic social-tasks
-      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic knowledge-tasks
+    command: >
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic legal-tasks &&
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic clinical-tasks &&
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic commercial-tasks &&
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic social-tasks &&
+      kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic knowledge-tasks &&
       kafka-topics --create --if-not-exists --bootstrap-server kafka:29092 --partitions 3 --replication-factor 1 --topic news-tasks
-      "
     networks:
       - pharma-demo
 
@@ -116,11 +114,10 @@ services:
       minio:
         condition: service_started
     entrypoint: ["/bin/sh", "-c"]
-    command: |
-      "
-      until mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin}; do sleep 1; done
-      mc mb --ignore-existing local/${MINIO_BUCKET:-reports}
-      "
+    command: >
+      until mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin}; do sleep 1; done &&
+      mc mb --ignore-existing local/${MINIO_BUCKET:-reports} &&
+      mc anonymous set download local/${MINIO_BUCKET:-reports}
     networks:
       - pharma-demo
 

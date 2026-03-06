@@ -36,7 +36,10 @@ class SupervisorAgent:
         """Validate a completed session."""
         session = self._cosmos.get_session(session_id)
 
-        all_completed = all(t.status in (TaskStatus.COMPLETED, TaskStatus.DLQ) for t in session.task_graph)
+        all_completed = all(
+            t.status in (TaskStatus.COMPLETED, TaskStatus.DLQ, TaskStatus.FAILED)
+            for t in session.task_graph
+        )
         if not all_completed:
             logger.warning("Session not fully completed", extra={"session_id": session_id})
             return False

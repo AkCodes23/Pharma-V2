@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import threading
 from typing import Callable
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
@@ -33,41 +34,37 @@ class _AsyncRunner:
 
 class KafkaTaskBusPublisher(_AsyncRunner, TaskBusPublisher):
     def __init__(self) -> None:
-        self._producer: AIOKafkaProducer | None = None
         self._bootstrap = get_settings().kafka.bootstrap_servers
 
-    async def _ensure_producer(self) -> AIOKafkaProducer:
-        if self._producer is None:
-            self._producer = AIOKafkaProducer(
-                bootstrap_servers=self._bootstrap,
-                value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
-                key_serializer=lambda v: v.encode("utf-8") if v else None,
-                acks="all",
-            )
-            await self._producer.start()
-        return self._producer
+    async def _publish_batch_async(self, messages: list[ServiceBusMessage]) -> int:
+        if not messages:
+            return 0
 
-    async def _publish(self, message: ServiceBusMessage) -> None:
-        producer = await self._ensure_producer()
-        topic = _pillar_topic(message.task.pillar)
-        payload = {"event_type": "task_dispatched", "data": message.model_dump(mode="json")}
-        await producer.send_and_wait(topic=topic, value=payload, key=message.session_id)
+        producer = AIOKafkaProducer(
+            bootstrap_servers=self._bootstrap,
+            value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
+            key_serializer=lambda v: v.encode("utf-8") if v else None,
+            acks="all",
+        )
+        await producer.start()
+        try:
+            for message in messages:
+                topic = _pillar_topic(message.task.pillar)
+                payload = {"event_type": "task_dispatched", "data": message.model_dump(mode="json")}
+                await producer.send_and_wait(topic=topic, value=payload, key=message.session_id)
+        finally:
+            await producer.stop()
 
-    def publish_task(self, message: ServiceBusMessage) -> None:
-        self._run(self._publish(message))
-
-    def publish_batch(self, messages: list[ServiceBusMessage]) -> int:
-        for message in messages:
-            self.publish_task(message)
         return len(messages)
 
-    async def _close_async(self) -> None:
-        if self._producer is not None:
-            await self._producer.stop()
-            self._producer = None
+    def publish_task(self, message: ServiceBusMessage) -> None:
+        self._run(self._publish_batch_async([message]))
+
+    def publish_batch(self, messages: list[ServiceBusMessage]) -> int:
+        return int(self._run(self._publish_batch_async(messages)))
 
     def close(self) -> None:
-        self._run(self._close_async())
+        return
 
 
 class KafkaTaskBusConsumer(_AsyncRunner, TaskBusConsumer):
@@ -75,8 +72,7 @@ class KafkaTaskBusConsumer(_AsyncRunner, TaskBusConsumer):
         self._pillar = pillar
         self._subscription_name = subscription_name
         self._bootstrap = get_settings().kafka.bootstrap_servers
-        self._running = False
-        self._consumer: AIOKafkaConsumer | None = None
+        self._stop_event = threading.Event()
 
     async def _consume_loop(
         self,
@@ -85,7 +81,7 @@ class KafkaTaskBusConsumer(_AsyncRunner, TaskBusConsumer):
         max_wait_time: int,
     ) -> None:
         topic = _pillar_topic(self._pillar)
-        self._consumer = AIOKafkaConsumer(
+        consumer = AIOKafkaConsumer(
             topic,
             bootstrap_servers=self._bootstrap,
             group_id=self._subscription_name,
@@ -96,16 +92,14 @@ class KafkaTaskBusConsumer(_AsyncRunner, TaskBusConsumer):
             heartbeat_interval_ms=10000,
         )
 
-        await self._consumer.start()
-        self._running = True
+        await consumer.start()
         logger.info(
             "Kafka task consumer started",
             extra={"topic": topic, "group_id": self._subscription_name},
         )
         try:
-            while self._running:
-                assert self._consumer is not None
-                batches = await self._consumer.getmany(
+            while not self._stop_event.is_set():
+                batches = await consumer.getmany(
                     timeout_ms=max_wait_time * 1000,
                     max_records=max_messages,
                 )
@@ -116,12 +110,9 @@ class KafkaTaskBusConsumer(_AsyncRunner, TaskBusConsumer):
                         message = ServiceBusMessage.model_validate(payload)
                         handler(message)
                 if batches:
-                    await self._consumer.commit()
+                    await consumer.commit()
         finally:
-            assert self._consumer is not None
-            await self._consumer.stop()
-            self._consumer = None
-            self._running = False
+            await consumer.stop()
 
     def consume(
         self,
@@ -129,19 +120,14 @@ class KafkaTaskBusConsumer(_AsyncRunner, TaskBusConsumer):
         max_messages: int = 10,
         max_wait_time: int = 30,
     ) -> None:
+        self._stop_event.clear()
         self._run(self._consume_loop(handler, max_messages, max_wait_time), timeout=3600)
 
     def stop(self) -> None:
-        self._running = False
-
-    async def _close_async(self) -> None:
-        self._running = False
-        if self._consumer is not None:
-            await self._consumer.stop()
-            self._consumer = None
+        self._stop_event.set()
 
     def close(self) -> None:
-        self._run(self._close_async())
+        self._stop_event.set()
 
 
 class KafkaTaskBusAdapterFactory(TaskBusFactory):

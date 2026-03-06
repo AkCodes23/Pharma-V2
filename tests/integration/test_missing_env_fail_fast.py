@@ -20,6 +20,7 @@ REQUIRED_DEMO_ENV = {
     "MINIO_ACCESS_KEY": "minioadmin",
     "MINIO_SECRET_KEY": "minioadmin",
     "MINIO_BUCKET": "reports",
+    "MINIO_PUBLIC_URL": "http://localhost:9000",
     "SUPERVISOR_URL": "http://localhost:8001",
     "EXECUTOR_URL": "http://localhost:8002",
 }

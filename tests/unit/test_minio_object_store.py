@@ -32,6 +32,7 @@ class _DummyMinioSettings:
     secret_key = "minioadmin"
     bucket = "reports"
     secure = False
+    public_url = "http://localhost:9000"
 
 
 class _DummySettings:
@@ -72,6 +73,6 @@ def test_minio_object_store_upload_returns_object_url(monkeypatch) -> None:
         content_type="application/pdf",
     )
 
-    assert url == "http://minio:9000/reports/reports/s-1/report.pdf"
+    assert url == "http://localhost:9000/reports/reports/s-1/report.pdf"
     client.put_object.assert_called_once()
 

@@ -15,5 +15,6 @@ class DemoAuthMiddleware(BaseHTTPMiddleware):
         if settings.provider.auth_mode.lower() == "anonymous":
             header_user = request.headers.get("X-Demo-User", "").strip()
             request.state.user_id = header_user or "demo-user"
-            request.state.user_role = request.headers.get("X-User-Role", "user").strip().lower()
+            # Demo auth deliberately ignores caller-supplied roles.
+            request.state.user_role = "user"
         return await call_next(request)

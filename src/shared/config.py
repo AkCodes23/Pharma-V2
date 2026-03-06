@@ -130,6 +130,7 @@ class MinioConfig(BaseSettings):
     secret_key: str = Field(default="")
     bucket: str = Field(default="reports")
     secure: bool = Field(default=False)
+    public_url: str = Field(default="")
 
 
 class RedisConfig(BaseSettings):
@@ -342,6 +343,7 @@ class Settings(BaseSettings):
             require("MINIO_ACCESS_KEY", self.minio.access_key)
             require("MINIO_SECRET_KEY", self.minio.secret_key)
             require("MINIO_BUCKET", self.minio.bucket)
+            require("MINIO_PUBLIC_URL", self.minio.public_url)
             require("SUPERVISOR_URL", p.supervisor_url)
             require("EXECUTOR_URL", p.executor_url)
         else:

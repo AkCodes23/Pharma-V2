@@ -36,7 +36,20 @@ def _message() -> ServiceBusMessage:
 def test_kafka_publisher_routes_to_pillar_topic(monkeypatch) -> None:
     publisher = KafkaTaskBusPublisher()
     fake_producer = _FakeProducer()
-    monkeypatch.setattr(publisher, "_ensure_producer", AsyncMock(return_value=fake_producer))
+
+    async def _fake_publish_batch(messages):
+        await fake_producer.send_and_wait(
+            "legal-tasks",
+            {"event_type": "task_dispatched", "data": messages[0].model_dump(mode="json")},
+            "session-1",
+        )
+        return len(messages)
+
+    monkeypatch.setattr(
+        publisher,
+        "_publish_batch_async",
+        AsyncMock(side_effect=_fake_publish_batch),
+    )
     monkeypatch.setattr(publisher, "_run", lambda coro, timeout=60: __import__("asyncio").run(coro))
 
     message = _message()

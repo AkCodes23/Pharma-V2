@@ -83,6 +83,10 @@ if (-not $session.report_url) {
 }
 
 Write-Host "[smoke] Report URL: $($session.report_url)"
+$download = Invoke-WebRequest -Uri $session.report_url -TimeoutSec 10
+if ($download.StatusCode -lt 200 -or $download.StatusCode -ge 300) {
+    throw "[smoke] Report URL is not downloadable"
+}
 
 $logs = docker compose logs --no-color
 if ($logs -match "azure\.com|windows\.net|servicebus\.windows\.net") {

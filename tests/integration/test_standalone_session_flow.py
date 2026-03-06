@@ -129,6 +129,7 @@ def test_standalone_session_flow_reaches_completed(monkeypatch) -> None:
     monkeypatch.setenv("MINIO_ACCESS_KEY", "minioadmin")
     monkeypatch.setenv("MINIO_SECRET_KEY", "minioadmin")
     monkeypatch.setenv("MINIO_BUCKET", "reports")
+    monkeypatch.setenv("MINIO_PUBLIC_URL", "http://localhost:9000")
     monkeypatch.setenv("POSTGRES_URL", "postgresql://pharma:pass@localhost:5432/pharma_ai")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
