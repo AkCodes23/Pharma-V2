@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { DistributionMeter, MiniBars, ProgressRing } from '../components/visuals';
 import { AgentResult, SessionResponse, createSession, getSession, getWsUrl } from '../lib/demo-api';
 
 const SUGGESTIONS = [
@@ -153,6 +154,43 @@ export default function Dashboard() {
   const validationScore = session?.validation ? Math.round(session.validation.grounding_score * 100) : 0;
   const phase = phaseCopy(session);
   const activeStageIndex = session ? SESSION_STAGES.indexOf(session.status as (typeof SESSION_STAGES)[number]) : -1;
+  const taskMix = useMemo(() => {
+    if (!session) {
+      return [
+        { label: 'Queued', value: 2, tone: 'gold' as const },
+        { label: 'Running', value: 2, tone: 'cyan' as const },
+        { label: 'Done', value: 1, tone: 'green' as const },
+      ];
+    }
+
+    const counts = session.task_graph.reduce(
+      (accumulator, task) => {
+        if (task.status === 'COMPLETED') {
+          accumulator.completed += 1;
+        } else if (task.status === 'RUNNING' || task.status === 'RETRIEVING' || task.status === 'VALIDATING') {
+          accumulator.running += 1;
+        } else {
+          accumulator.queued += 1;
+        }
+        return accumulator;
+      },
+      { queued: 0, running: 0, completed: 0 },
+    );
+
+    return [
+      { label: 'Queued', value: counts.queued, tone: 'gold' as const },
+      { label: 'Running', value: counts.running, tone: 'cyan' as const },
+      { label: 'Done', value: counts.completed, tone: 'green' as const },
+    ];
+  }, [session]);
+  const confidenceBars = useMemo(
+    () => (session?.agent_results.length ? session.agent_results.map((result) => Math.round(result.confidence * 100)) : [46, 62, 71, 68, 79, 74]),
+    [session],
+  );
+  const confidenceLabels = useMemo(
+    () => (session?.agent_results.length ? session.agent_results.map((result) => result.pillar.slice(0, 3)) : ['LEG', 'CLI', 'COM', 'SOC', 'KNO', 'NEW']),
+    [session],
+  );
 
   async function handleSubmit() {
     if (!query.trim() || isSubmitting) {
@@ -271,6 +309,46 @@ export default function Dashboard() {
           <span className="metric-card__label">Decision</span>
           <strong className="metric-card__value">{formatDecision(session?.decision || null)}</strong>
           <p>{session?.updated_at ? new Date(session.updated_at).toLocaleString() : 'No session activity yet'}</p>
+        </article>
+      </section>
+
+      <section className="signal-grid">
+        <article className="surface signal-card">
+          <div className="signal-card__header">
+            <div>
+              <p className="eyebrow">Execution mix</p>
+              <h2>Workflow load</h2>
+            </div>
+            <span className="tiny-label">{totalTasks || 5} tracked tasks</span>
+          </div>
+          <DistributionMeter items={taskMix} />
+        </article>
+
+        <article className="surface signal-card">
+          <div className="signal-card__header">
+            <div>
+              <p className="eyebrow">Evidence shape</p>
+              <h2>Pillar confidence</h2>
+            </div>
+            <span className="tiny-label">Deterministic output profile</span>
+          </div>
+          <MiniBars values={confidenceBars} labels={confidenceLabels} tone="cyan" />
+        </article>
+
+        <article className="surface signal-card signal-card--ring">
+          <div className="signal-card__header">
+            <div>
+              <p className="eyebrow">Quality signal</p>
+              <h2>Grounding posture</h2>
+            </div>
+            <span className="tiny-label">{session?.validation?.is_valid ? 'Validated' : 'Awaiting review'}</span>
+          </div>
+          <ProgressRing
+            value={session?.validation ? validationScore : 72}
+            tone={session?.validation?.is_valid ? 'green' : 'gold'}
+            label="grounded"
+            caption="Grounding is derived from the supervisor pass before synthesis is finalized."
+          />
         </article>
       </section>
 

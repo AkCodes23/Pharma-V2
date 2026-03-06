@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { DistributionMeter, MiniBars, PulseDot, ProgressRing } from '../../components/visuals';
 import { ServiceHealth, SessionSummary, getApiUrl, getServiceHealth, listSessions } from '../../lib/demo-api';
 
 function buildServiceBaseUrl(port: string): string {
@@ -83,6 +84,38 @@ export default function AdminPage() {
       decisionRate: sessions.length ? Math.round((withDecision / sessions.length) * 100) : 0,
     };
   }, [sessions]);
+  const statusDistribution = useMemo(() => {
+    const counts = sessions.reduce<Record<string, number>>((accumulator, session) => {
+      accumulator[session.status] = (accumulator[session.status] || 0) + 1;
+      return accumulator;
+    }, {});
+
+    return [
+      { label: 'Retrieving', value: counts.RETRIEVING || 0, tone: 'cyan' as const },
+      { label: 'Validating', value: counts.VALIDATING || 0, tone: 'gold' as const },
+      { label: 'Synthesizing', value: counts.SYNTHESIZING || 0, tone: 'rose' as const },
+      { label: 'Completed', value: counts.COMPLETED || 0, tone: 'green' as const },
+    ];
+  }, [sessions]);
+  const recentVelocity = useMemo(
+    () =>
+      sessions.slice(0, 8).map((session) => {
+        if (session.status === 'COMPLETED') {
+          return 92;
+        }
+        if (session.status === 'SYNTHESIZING') {
+          return 76;
+        }
+        if (session.status === 'VALIDATING') {
+          return 58;
+        }
+        if (session.status === 'RETRIEVING') {
+          return 42;
+        }
+        return 24;
+      }),
+    [sessions],
+  );
 
   return (
     <div className="page-shell">
@@ -119,6 +152,46 @@ export default function AdminPage() {
         </article>
       </section>
 
+      <section className="signal-grid">
+        <article className="surface signal-card">
+          <div className="signal-card__header">
+            <div>
+              <p className="eyebrow">Runtime distribution</p>
+              <h2>Session state mix</h2>
+            </div>
+            <span className="tiny-label">Last {sessions.length || 0} sessions</span>
+          </div>
+          <DistributionMeter items={statusDistribution} />
+        </article>
+
+        <article className="surface signal-card">
+          <div className="signal-card__header">
+            <div>
+              <p className="eyebrow">Throughput</p>
+              <h2>Recent workflow velocity</h2>
+            </div>
+            <span className="tiny-label">Most recent runs</span>
+          </div>
+          <MiniBars values={recentVelocity.length ? recentVelocity : [26, 48, 62, 74, 84]} tone="rose" />
+        </article>
+
+        <article className="surface signal-card signal-card--ring">
+          <div className="signal-card__header">
+            <div>
+              <p className="eyebrow">Completion</p>
+              <h2>Decision yield</h2>
+            </div>
+            <span className="tiny-label">Sessions with a conclusion</span>
+          </div>
+          <ProgressRing
+            value={totals.decisionRate}
+            tone={totals.decisionRate >= 70 ? 'green' : totals.decisionRate >= 40 ? 'gold' : 'rose'}
+            label="yield"
+            caption="This is the share of visible sessions that reached a stored decision."
+          />
+        </article>
+      </section>
+
       <section className="section-heading">
         <div>
           <p className="eyebrow">Service mesh</p>
@@ -133,9 +206,11 @@ export default function AdminPage() {
             <p className="eyebrow">{name}</p>
             <h3>{service?.service || 'Unavailable'}</h3>
             <p>{service ? `Reported status: ${service.status}` : 'Service is not responding to health checks.'}</p>
-            <span className={`status-chip status-chip--${service?.status || 'failed'}`}>
-              {service?.status || 'down'}
-            </span>
+            <PulseDot
+              label="health"
+              status={service?.status || 'down'}
+              tone={service?.status === 'healthy' ? 'green' : 'rose'}
+            />
           </article>
         ))}
       </section>

@@ -199,6 +199,7 @@ textarea {
 .filters-bar,
 .reports-layout,
 .report-list,
+.signal-grid,
 .metrics-grid,
 .capability-grid,
 .task-grid,
@@ -471,11 +472,31 @@ textarea {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.signal-grid,
 .stage-strip,
 .capability-grid,
 .task-grid,
 .results-grid {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.signal-card {
+  min-height: 220px;
+}
+
+.signal-card--ring {
+  display: grid;
+  align-content: start;
+}
+
+.signal-card__header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
 }
 
 .stage-card {
@@ -565,8 +586,257 @@ textarea {
 .result-card p,
 .report-detail p,
 .empty-panel,
-.conflict-card p {
+.conflict-card p,
+.signal-card p {
   color: var(--text-soft);
+}
+
+.viz-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.viz-caption {
+  margin: 0;
+  max-width: 34ch;
+}
+
+.progress-ring {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 0 auto;
+}
+
+.progress-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.progress-ring__track,
+.progress-ring__value {
+  fill: none;
+  stroke-width: 10;
+}
+
+.progress-ring__track {
+  stroke: rgba(243, 238, 226, 0.08);
+}
+
+.progress-ring__value {
+  stroke-linecap: round;
+  transition: stroke-dashoffset 320ms ease;
+}
+
+.progress-ring--gold .progress-ring__value {
+  stroke: var(--accent-gold);
+}
+
+.progress-ring--cyan .progress-ring__value {
+  stroke: var(--accent-cyan);
+}
+
+.progress-ring--rose .progress-ring__value {
+  stroke: var(--accent-rose);
+}
+
+.progress-ring--green .progress-ring__value {
+  stroke: var(--accent-green);
+}
+
+.progress-ring__center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.progress-ring__center strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.progress-ring__center span {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+}
+
+.mini-bars {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+  min-height: 176px;
+  padding-top: 0.75rem;
+}
+
+.mini-bars__item {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: center;
+  align-content: end;
+  min-height: 100%;
+}
+
+.mini-bars__bar {
+  width: 100%;
+  max-width: 32px;
+  border-radius: 999px 999px 10px 10px;
+  background: var(--gradient-main);
+  box-shadow: 0 12px 30px rgba(202, 157, 83, 0.14);
+}
+
+.mini-bars--cyan .mini-bars__bar {
+  background: linear-gradient(180deg, #9be0de 0%, #6fb0ae 100%);
+}
+
+.mini-bars--rose .mini-bars__bar {
+  background: linear-gradient(180deg, #e7a293 0%, #c77763 100%);
+}
+
+.mini-bars--green .mini-bars__bar {
+  background: linear-gradient(180deg, #8dc694 0%, #6f9b72 100%);
+}
+
+.mini-bars__label {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.distribution-meter {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 1rem;
+}
+
+.distribution-meter__track {
+  display: flex;
+  min-height: 20px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(243, 238, 226, 0.05);
+}
+
+.distribution-meter__segment {
+  min-width: 0;
+}
+
+.distribution-meter__segment--gold {
+  background: linear-gradient(90deg, #e2c08d 0%, #ca9d53 100%);
+}
+
+.distribution-meter__segment--cyan {
+  background: linear-gradient(90deg, #8fd1cf 0%, #6fb0ae 100%);
+}
+
+.distribution-meter__segment--rose {
+  background: linear-gradient(90deg, #e7a293 0%, #c77763 100%);
+}
+
+.distribution-meter__segment--green {
+  background: linear-gradient(90deg, #8dc694 0%, #6f9b72 100%);
+}
+
+.distribution-meter__legend {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.distribution-meter__legend-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--text-soft);
+}
+
+.distribution-meter__legend-item strong {
+  font-family: var(--font-mono);
+  color: var(--text-main);
+}
+
+.distribution-meter__swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+}
+
+.distribution-meter__swatch--gold {
+  background: var(--accent-gold);
+}
+
+.distribution-meter__swatch--cyan {
+  background: var(--accent-cyan);
+}
+
+.distribution-meter__swatch--rose {
+  background: var(--accent-rose);
+}
+
+.distribution-meter__swatch--green {
+  background: var(--accent-green);
+}
+
+.pulse-dot {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.pulse-dot__signal {
+  position: relative;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+}
+
+.pulse-dot__signal::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  opacity: 0.28;
+  animation: pulse 2.2s ease infinite;
+}
+
+.pulse-dot__signal--gold,
+.pulse-dot__signal--gold::after {
+  background: var(--accent-gold);
+}
+
+.pulse-dot__signal--cyan,
+.pulse-dot__signal--cyan::after {
+  background: var(--accent-cyan);
+}
+
+.pulse-dot__signal--rose,
+.pulse-dot__signal--rose::after {
+  background: var(--accent-rose);
+}
+
+.pulse-dot__signal--green,
+.pulse-dot__signal--green::after {
+  background: var(--accent-green);
+}
+
+.pulse-dot strong {
+  display: block;
+  text-transform: capitalize;
 }
 
 .progress-track {
@@ -792,6 +1062,23 @@ textarea {
   background: var(--line-strong);
 }
 
+@keyframes pulse {
+  0% {
+    transform: scale(0.75);
+    opacity: 0.32;
+  }
+
+  70% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+
 *:focus-visible {
   outline: 2px solid rgba(202, 157, 83, 0.7);
   outline-offset: 2px;
@@ -811,6 +1098,7 @@ textarea {
   .composer__actions,
   .section-heading,
   .section-heading__actions,
+  .signal-card__header,
   .report-detail__header,
   .verdict-panel,
   .verdict-panel__actions {
