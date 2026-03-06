@@ -11,6 +11,7 @@ from src.agents.supervisor.main import SupervisorAgent
 from src.demo.fixture_loader import get_fixture_loader
 from src.shared.adapters.fixture_decomposer import FixtureDecomposer
 from src.shared.adapters.fixture_report_generator import FixtureReportGenerator
+from src.shared.config import get_settings
 from src.shared.models.enums import (
     AgentType,
     DecisionOutcome,
@@ -115,6 +116,25 @@ class FakeTaskBus:
 
 
 def test_standalone_session_flow_reaches_completed(monkeypatch) -> None:
+    get_settings.cache_clear()
+    monkeypatch.setenv("APP_MODE", "standalone_demo")
+    monkeypatch.setenv("DEMO_OFFLINE", "true")
+    monkeypatch.setenv("DATA_STORE_PROVIDER", "postgres")
+    monkeypatch.setenv("TASK_BUS_PROVIDER", "kafka")
+    monkeypatch.setenv("OBJECT_STORE_PROVIDER", "minio")
+    monkeypatch.setenv("LLM_PROVIDER", "fixture")
+    monkeypatch.setenv("KNOWLEDGE_PROVIDER", "fixture")
+    monkeypatch.setenv("AUTH_MODE", "anonymous")
+    monkeypatch.setenv("MINIO_ENDPOINT", "minio:9000")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "minioadmin")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "minioadmin")
+    monkeypatch.setenv("MINIO_BUCKET", "reports")
+    monkeypatch.setenv("POSTGRES_URL", "postgresql://pharma:pass@localhost:5432/pharma_ai")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    monkeypatch.setenv("SUPERVISOR_URL", "http://localhost:8001")
+    monkeypatch.setenv("EXECUTOR_URL", "http://localhost:8002")
+
     session_store = InMemorySessionStore()
     task_bus = FakeTaskBus()
     audit = MagicMock()

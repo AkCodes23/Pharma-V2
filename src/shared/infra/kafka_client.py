@@ -132,7 +132,7 @@ class KafkaEventProducer:
 
         Mirrors ServiceBusPublisher.publish_task() for interchangeability.
         """
-        topic = f"pharma.tasks.{pillar.lower()}"
+        topic = f"{pillar.lower()}-tasks"
         await self.publish_event(
             topic=topic,
             event_type="task_dispatched",

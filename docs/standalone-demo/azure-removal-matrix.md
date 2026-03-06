@@ -3,7 +3,7 @@
 | Capability | Production Dependency | Demo Replacement | Notes |
 |---|---|---|---|
 | Session state + audit | Azure Cosmos DB | PostgreSQL (`PostgresSessionStore`) | JSON payload persisted in `demo_sessions` and `demo_audit`. |
-| Task bus | Azure Service Bus topics/subscriptions | Kafka topics (`pharma.tasks.*`) | Topics created by `kafka-init` container. |
+| Task bus | Azure Service Bus topics/subscriptions | Kafka topics (`*-tasks`) | Topics created by `kafka-init` container using the same pillar routing contract as production. |
 | Report artifact storage | Azure Blob Storage | MinIO bucket (`reports`) | S3-compatible upload path. |
 | Intent decomposition | Azure OpenAI chat completions | Fixture decomposer | Deterministic fixture selection by query token match. |
 | Report synthesis | Azure OpenAI report prompt | Fixture report generator | Deterministic decision logic + markdown template. |

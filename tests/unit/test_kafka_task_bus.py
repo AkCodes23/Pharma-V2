@@ -44,7 +44,7 @@ def test_kafka_publisher_routes_to_pillar_topic(monkeypatch) -> None:
 
     assert len(fake_producer.calls) == 1
     topic, payload, key = fake_producer.calls[0]
-    assert topic == "pharma.tasks.legal"
+    assert topic == "legal-tasks"
     assert payload["data"]["session_id"] == "session-1"
     assert key == "session-1"
 

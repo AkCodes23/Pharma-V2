@@ -16,6 +16,11 @@ from src.shared.ports.task_bus import TaskBusConsumer, TaskBusFactory, TaskBusPu
 logger = logging.getLogger(__name__)
 
 
+def _pillar_topic(pillar: PillarType) -> str:
+    """Map pillar enums to the source-of-truth topic naming contract."""
+    return f"{pillar.value.lower()}-tasks"
+
+
 class _AsyncRunner:
     def _run(self, coro: object, *, timeout: int = 60) -> object:
         try:
@@ -44,7 +49,7 @@ class KafkaTaskBusPublisher(_AsyncRunner, TaskBusPublisher):
 
     async def _publish(self, message: ServiceBusMessage) -> None:
         producer = await self._ensure_producer()
-        topic = f"pharma.tasks.{message.task.pillar.value.lower()}"
+        topic = _pillar_topic(message.task.pillar)
         payload = {"event_type": "task_dispatched", "data": message.model_dump(mode="json")}
         await producer.send_and_wait(topic=topic, value=payload, key=message.session_id)
 
@@ -79,7 +84,7 @@ class KafkaTaskBusConsumer(_AsyncRunner, TaskBusConsumer):
         max_messages: int,
         max_wait_time: int,
     ) -> None:
-        topic = f"pharma.tasks.{self._pillar.value.lower()}"
+        topic = _pillar_topic(self._pillar)
         self._consumer = AIOKafkaConsumer(
             topic,
             bootstrap_servers=self._bootstrap,
