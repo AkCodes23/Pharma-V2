@@ -238,6 +238,3 @@ Before demo:
 - Some local tests are environment-sensitive.
 - WebSocket fan-out is Redis-backed in local mode and Web PubSub-backed when configured for Azure.
 
-## 11. License
-
-Proprietary. Internal use only unless explicitly authorized.
