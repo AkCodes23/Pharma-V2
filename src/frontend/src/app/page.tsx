@@ -1,462 +1,442 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 
-/* ── Types ──────────────────────────────────────────────── */
-
-interface TaskNode {
-  task_id: string;
-  pillar: string;
-  description: string;
-  status: string;
-}
-
-interface ConflictDetail {
-  conflict_type: string;
-  severity: string;
-  description: string;
-  recommendation: string;
-}
-
-interface SessionResponse {
-  session_id: string;
-  status: string;
-  query: string;
-  task_graph: TaskNode[];
-  agent_results: Record<string, unknown>[];
-  validation: {
-    is_valid: boolean;
-    grounding_score: number;
-    conflicts: ConflictDetail[];
-  } | null;
-  decision: string | null;
-  decision_rationale: string | null;
-  report_url: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-/* ── API ────────────────────────────────────────────────── */
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-
-async function createSession(query: string): Promise<{ session_id: string; tasks: TaskNode[] }> {
-  const res = await fetch(`${API_URL}/api/v1/sessions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, user_id: 'demo-user' }),
-  });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
-  return res.json();
-}
-
-async function getSession(sessionId: string): Promise<SessionResponse> {
-  const res = await fetch(`${API_URL}/api/v1/sessions/${sessionId}`);
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
-  return res.json();
-}
-
-/* ── Pillar Config ──────────────────────────────────────── */
-
-const PILLAR_CONFIG: Record<string, { icon: string; className: string; label: string }> = {
-  LEGAL: { icon: '⚖️', className: 'agent-card__pillar--legal', label: 'Legal' },
-  CLINICAL: { icon: '🧪', className: 'agent-card__pillar--clinical', label: 'Clinical' },
-  COMMERCIAL: { icon: '📊', className: 'agent-card__pillar--commercial', label: 'Commercial' },
-  SOCIAL: { icon: '🛡️', className: 'agent-card__pillar--social', label: 'Social' },
-  KNOWLEDGE: { icon: '📚', className: 'agent-card__pillar--knowledge', label: 'Knowledge' },
-};
-
-const STATUS_CONFIG: Record<string, { dot: string; label: string }> = {
-  QUEUED: { dot: 'status-dot--queued', label: 'Queued' },
-  RUNNING: { dot: 'status-dot--running', label: 'Running' },
-  COMPLETED: { dot: 'status-dot--completed', label: 'Completed' },
-  FAILED: { dot: 'status-dot--failed', label: 'Failed' },
-  RETRYING: { dot: 'status-dot--running', label: 'Retrying' },
-  DLQ: { dot: 'status-dot--failed', label: 'Dead Letter' },
-};
-
-/* ── Suggestion Chips ───────────────────────────────────── */
+import { AgentResult, SessionResponse, createSession, getSession, getWsUrl } from '../lib/demo-api';
 
 const SUGGESTIONS = [
   'Assess 2027 generic launch for Keytruda in India',
-  'Should we pursue a biosimilar for Humira in the EU?',
-  'Evaluate the oncology patent cliff impact for 2026-2030',
-  'Market entry analysis for generic Eliquis in the US',
+  'Evaluate a biosimilar entry strategy for Humira in the EU',
+  'Analyze the oncology patent cliff impact for 2026 to 2030',
+  'Market-entry analysis for a generic Eliquis launch in the US',
 ];
 
-/* ── Loading Skeleton Component ─────────────────────────── */
+const SESSION_STAGES = ['PLANNING', 'RETRIEVING', 'VALIDATING', 'SYNTHESIZING', 'COMPLETED'] as const;
 
-function AgentCardSkeleton() {
-  return (
-    <div className="glass-card agent-card" style={{ minHeight: '140px' }}>
-      <div className="agent-card__header">
-        <div className="skeleton skeleton-text--badge" />
-        <div className="skeleton" style={{ height: '14px', width: '60px' }} />
-      </div>
-      <div className="skeleton skeleton-text" />
-      <div className="skeleton skeleton-text skeleton-text--short" />
-      <div className="agent-card__meta" style={{ marginTop: 'auto' }}>
-        <div className="skeleton" style={{ height: '10px', width: '80px' }} />
-        <div className="skeleton" style={{ height: '10px', width: '50px' }} />
-      </div>
-    </div>
-  );
+const PILLAR_LABELS: Record<string, string> = {
+  LEGAL: 'Legal barrier scan',
+  CLINICAL: 'Clinical landscape',
+  COMMERCIAL: 'Market opportunity',
+  SOCIAL: 'Safety signal scan',
+  KNOWLEDGE: 'Internal knowledge',
+  NEWS: 'Recent developments',
+};
+
+function formatDecision(value: string | null): string {
+  return value ? value.replace(/_/g, ' ') : 'Pending';
 }
 
-/* ── Animated Counter Hook ──────────────────────────────── */
+function formatStatus(value: string): string {
+  return value.toLowerCase().replace(/_/g, ' ');
+}
 
-function useAnimatedCounter(target: number, duration: number = 600): number {
-  const [value, setValue] = useState(0);
-  useEffect(() => {
-    if (target <= 0) return;
-    const start = performance.now();
-    const animate = (now: number) => {
-      const elapsed = now - start;
-      const progress = Math.min(elapsed / duration, 1);
-      // Ease-out cubic
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.round(target * eased));
-      if (progress < 1) requestAnimationFrame(animate);
+function summarizeFindings(result: AgentResult): string[] {
+  return Object.entries(result.findings)
+    .slice(0, 3)
+    .map(([key, rawValue]) => {
+      const value =
+        typeof rawValue === 'string'
+          ? rawValue
+          : Array.isArray(rawValue)
+            ? `${rawValue.length} items`
+            : typeof rawValue === 'object' && rawValue !== null
+              ? `${Object.keys(rawValue).length} fields`
+              : String(rawValue);
+      return `${key.replace(/_/g, ' ')}: ${value}`;
+    });
+}
+
+function phaseCopy(session: SessionResponse | null): { title: string; body: string } {
+  if (!session) {
+    return {
+      title: 'Local strategy orchestration',
+      body: 'Run planner, retrievers, validation, and synthesis locally with offline fixtures and downloadable report artifacts.',
     };
-    requestAnimationFrame(animate);
-  }, [target, duration]);
-  return value;
-}
+  }
 
-/* ── Page Component ─────────────────────────────────────── */
+  if (session.status === 'RETRIEVING') {
+    return {
+      title: 'Retrievers are assembling evidence',
+      body: 'Pillar workers are collecting deterministic findings and citations for the current strategy run.',
+    };
+  }
+
+  if (session.status === 'VALIDATING') {
+    return {
+      title: 'Supervisor is checking grounding',
+      body: 'Cross-pillar consistency and citation quality are being validated before the final report is generated.',
+    };
+  }
+
+  if (session.status === 'SYNTHESIZING') {
+    return {
+      title: 'Executor is packaging the report',
+      body: 'Decision logic, rationale, and artifact generation are now in the final synthesis pass.',
+    };
+  }
+
+  if (session.status === 'COMPLETED') {
+    return {
+      title: 'Report package is ready',
+      body: 'The session has completed and the report artifact is available from local object storage.',
+    };
+  }
+
+  return {
+    title: 'Session requires attention',
+    body: 'The run stopped before completion. Inspect the task board and reports library for the latest state.',
+  };
+}
 
 export default function Dashboard() {
   const [query, setQuery] = useState('');
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPolling, setIsPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [polling, setPolling] = useState(false);
 
-  const groundingScoreAnimated = useAnimatedCounter(
-    session?.validation ? Math.round(session.validation.grounding_score * 100) : 0
-  );
+  useEffect(() => {
+    if (!activeSessionId) {
+      return;
+    }
 
-  /* ── Submit Query ───────────────────────────────────── */
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-  const handleSubmit = useCallback(async () => {
-    if (!query.trim() || loading) return;
+    const poll = async () => {
+      try {
+        const nextSession = await getSession(activeSessionId);
+        if (cancelled) {
+          return;
+        }
+        setSession(nextSession);
 
-    setLoading(true);
+        if (nextSession.status === 'COMPLETED' || nextSession.status === 'FAILED') {
+          setIsPolling(false);
+          return;
+        }
+
+        timer = setTimeout(() => {
+          void poll();
+        }, 2500);
+      } catch (requestError) {
+        if (cancelled) {
+          return;
+        }
+        setError(requestError instanceof Error ? requestError.message : 'Unable to refresh session state');
+        setIsPolling(false);
+      }
+    };
+
+    setIsPolling(true);
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [activeSessionId]);
+
+  const completedTasks = useMemo(() => {
+    if (!session) {
+      return 0;
+    }
+    return session.task_graph.filter((task) => task.status === 'COMPLETED').length;
+  }, [session]);
+
+  const totalTasks = session?.task_graph.length || 0;
+  const progress = totalTasks === 0 ? 0 : Math.round((completedTasks / totalTasks) * 100);
+  const validationScore = session?.validation ? Math.round(session.validation.grounding_score * 100) : 0;
+  const phase = phaseCopy(session);
+  const activeStageIndex = session ? SESSION_STAGES.indexOf(session.status as (typeof SESSION_STAGES)[number]) : -1;
+
+  async function handleSubmit() {
+    if (!query.trim() || isSubmitting) {
+      return;
+    }
+
+    setIsSubmitting(true);
     setError(null);
     setSession(null);
 
     try {
-      const result = await createSession(query);
-      setSessionId(result.session_id);
-      setPolling(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create session');
+      const response = await createSession(query.trim());
+      setActiveSessionId(response.session_id);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to create session');
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
-  }, [query, loading]);
-
-  /* ── Keyboard Shortcut (Ctrl+Enter / Cmd+Enter) ───── */
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      handleSubmit();
-    } else if (e.key === 'Enter') {
-      handleSubmit();
-    }
-  }, [handleSubmit]);
-
-  /* ── Poll for Updates ───────────────────────────────── */
-
-  useEffect(() => {
-    if (!polling || !sessionId) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const data = await getSession(sessionId);
-        setSession(data);
-        if (['COMPLETED', 'FAILED'].includes(data.status)) {
-          setPolling(false);
-        }
-      } catch {
-        // Silently retry on poll failure
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [polling, sessionId]);
-
-  /* ── Render ─────────────────────────────────────────── */
-
-  const progress = session
-    ? (session.task_graph.filter(t => t.status === 'COMPLETED').length / Math.max(session.task_graph.length, 1)) * 100
-    : 0;
+  }
 
   return (
-    <div>
-      {/* Hero Section */}
-      <section style={{ textAlign: 'center', margin: '3rem 0 2rem' }}>
-        <h1 style={{
-          fontSize: '2.5rem',
-          fontWeight: 900,
-          background: 'var(--gradient-primary)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
-          marginBottom: '0.5rem',
-        }}>
-          Strategic Intelligence Engine
-        </h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '1.0625rem', maxWidth: '600px', margin: '0 auto' }}>
-          Deploy an agent swarm for real-time pharmaceutical market-entry analysis.
-          100% citation-grounded. Zero hallucinations.
-        </p>
-      </section>
+    <div className="page-shell">
+      <section className="hero-panel">
+        <div className="hero-panel__content">
+          <p className="eyebrow">Standalone demo console</p>
+          <h1 className="hero-panel__title">A sharper local front end for the strategy workflow.</h1>
+          <p className="hero-panel__body">{phase.body}</p>
 
-      {/* Query Input */}
-      <section className="query-section">
-        <div className="query-input-wrapper">
-          <input
-            type="text"
-            className="query-input"
-            placeholder='Enter your strategic query... (e.g., "Should we launch a generic for Keytruda in India by 2027?")'
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={loading}
-            aria-label="Strategic query input"
-          />
-          <button
-            className="query-submit-btn"
-            onClick={handleSubmit}
-            disabled={loading || !query.trim()}
-            aria-label="Submit strategic query"
-          >
-            {loading ? '⏳ Deploying...' : '🚀 Analyze'}
-          </button>
-        </div>
-
-        {/* Suggestion Chips */}
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
-          {SUGGESTIONS.map((s, i) => (
-            <button
-              key={i}
-              onClick={() => setQuery(s)}
-              aria-label={`Use suggestion: ${s}`}
-              style={{
-                padding: '0.375rem 0.875rem',
-                background: 'var(--bg-glass)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-secondary)',
-                fontSize: '0.75rem',
-                cursor: 'pointer',
-                fontFamily: 'var(--font-sans)',
-                transition: 'all var(--transition-fast)',
-              }}
-              onMouseEnter={(e) => {
-                (e.target as HTMLButtonElement).style.borderColor = 'var(--accent-indigo)';
-                (e.target as HTMLButtonElement).style.color = 'var(--accent-indigo)';
-              }}
-              onMouseLeave={(e) => {
-                (e.target as HTMLButtonElement).style.borderColor = 'var(--border-subtle)';
-                (e.target as HTMLButtonElement).style.color = 'var(--text-secondary)';
-              }}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-
-        <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-          💡 Press <kbd style={{ padding: '1px 4px', background: 'var(--bg-glass)', borderRadius: '3px', fontFamily: 'var(--font-mono)', fontSize: '0.625rem' }}>Ctrl</kbd>+<kbd style={{ padding: '1px 4px', background: 'var(--bg-glass)', borderRadius: '3px', fontFamily: 'var(--font-mono)', fontSize: '0.625rem' }}>Enter</kbd> to submit
-        </p>
-      </section>
-
-      {/* Error with Retry */}
-      {error && (
-        <div style={{
-          padding: '1rem 1.5rem',
-          background: 'rgba(239, 68, 68, 0.08)',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
-          borderRadius: 'var(--radius-md)',
-          color: 'var(--accent-red)',
-          margin: '1rem 0',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-          <span>❌ {error}</span>
-          <button
-            onClick={handleSubmit}
-            style={{
-              padding: '0.375rem 0.875rem',
-              background: 'rgba(239, 68, 68, 0.15)',
-              border: '1px solid rgba(239, 68, 68, 0.4)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--accent-red)',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-              fontFamily: 'var(--font-sans)',
-            }}
-          >
-            🔄 Retry
-          </button>
-        </div>
-      )}
-
-      {/* Loading Skeletons (before first poll response) */}
-      {loading && !session && (
-        <div>
-          <div style={{ margin: '2rem 0 1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Deploying Agent Swarm...</span>
-            </div>
-            <div className="progress-bar"><div className="progress-bar__fill" style={{ width: '10%' }} /></div>
-          </div>
-          <div className="agents-grid">
-            {[1, 2, 3, 4, 5].map(i => <AgentCardSkeleton key={i} />)}
-          </div>
-        </div>
-      )}
-
-      {/* Session Progress */}
-      {session && (
-        <>
-          {/* Progress Bar */}
-          <div style={{ margin: '2rem 0 1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-              <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>
-                Agent Swarm Progress
-              </span>
-              <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                {Math.round(progress)}%
+          <div className="composer surface">
+            <div className="composer__header">
+              <div>
+                <p className="eyebrow">Launch a session</p>
+                <h2>{phase.title}</h2>
+              </div>
+              <span className={`status-chip status-chip--${session ? session.status.toLowerCase() : 'ready'}`}>
+                {session ? formatStatus(session.status) : 'ready'}
               </span>
             </div>
-            <div className="progress-bar">
-              <div className="progress-bar__fill" style={{ width: `${progress}%` }} />
+
+            <textarea
+              className="field-textarea"
+              value={query}
+              placeholder="Describe the strategic question you want the demo stack to analyze."
+              onChange={(event) => setQuery(event.target.value)}
+            />
+
+            <div className="composer__actions">
+              <button type="button" className="button button--primary" onClick={() => void handleSubmit()} disabled={isSubmitting}>
+                {isSubmitting ? 'Starting session...' : 'Run analysis'}
+              </button>
+              <Link className="button button--ghost" href="/reports">
+                Open report library
+              </Link>
+              <span className="tiny-label">WebSocket: {getWsUrl()}</span>
             </div>
-          </div>
 
-          {/* Agent Status Grid */}
-          <div className="agents-grid">
-            {session.task_graph.map((task) => {
-              const pillar = PILLAR_CONFIG[task.pillar] || { icon: '🔄', className: '', label: task.pillar };
-              const status = STATUS_CONFIG[task.status] || { dot: 'status-dot--queued', label: task.status };
-              return (
-                <div key={task.task_id} className="glass-card agent-card">
-                  <div className="agent-card__header">
-                    <span className={`agent-card__pillar ${pillar.className}`}>
-                      {pillar.icon} {pillar.label}
-                    </span>
-                    <div className="agent-card__status">
-                      <span className={`status-dot ${status.dot}`} />
-                      {status.label}
-                    </div>
-                  </div>
-                  <p className="agent-card__description">{task.description}</p>
-                  <div className="agent-card__meta">
-                    <span>{task.task_id.slice(0, 8)}...</span>
-                    <span>{task.status}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Decision Banner */}
-          {session.decision && (
-            <div className={`decision-banner decision-banner--${
-              session.decision === 'GO' ? 'go' :
-              session.decision === 'NO_GO' ? 'no-go' : 'conditional'
-            }`}>
-              <div className="decision-banner__icon">
-                {session.decision === 'GO' ? '✅' :
-                 session.decision === 'NO_GO' ? '🚫' : '⚠️'}
-              </div>
-              <div className="decision-banner__text">
-                <div className="decision-banner__title">
-                  Decision: {session.decision.replace('_', ' ')}
-                </div>
-                <div className="decision-banner__rationale">
-                  {session.decision_rationale}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Conflicts / Strategic Risks */}
-          {session.validation?.conflicts && session.validation.conflicts.length > 0 && (
-            <div style={{ margin: '2rem 0' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '1rem' }}>
-                🔴 Strategic Risks Detected
-              </h2>
-              {session.validation.conflicts.map((conflict, i) => (
-                <div
-                  key={i}
-                  className={`conflict-card ${conflict.severity === 'CRITICAL' ? 'conflict-card--critical' : ''}`}
+            <div className="suggestions-row">
+              {SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  className="suggestion-chip"
+                  onClick={() => setQuery(suggestion)}
                 >
-                  <div className="conflict-card__severity">
-                    {conflict.severity} — {conflict.conflict_type.replace(/_/g, ' ')}
-                  </div>
-                  <div className="conflict-card__title">{conflict.description}</div>
-                  <div className="conflict-card__description">
-                    💡 {conflict.recommendation}
-                  </div>
-                </div>
+                  {suggestion}
+                </button>
               ))}
             </div>
-          )}
+          </div>
 
-          {/* Grounding Score (Animated Counter) */}
-          {session.validation && (
-            <div className="glass-card" style={{ margin: '1rem 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Citation Grounding Score
-                </div>
-                <div style={{
-                  fontSize: '2rem',
-                  fontWeight: 800,
-                  background: 'var(--gradient-primary)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  backgroundClip: 'text',
-                }}>
-                  {groundingScoreAnimated}%
-                </div>
-              </div>
-              <div style={{
-                padding: '0.5rem 1rem',
-                background: session.validation.is_valid ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                border: `1px solid ${session.validation.is_valid ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                color: session.validation.is_valid ? 'var(--accent-emerald)' : 'var(--accent-red)',
-              }}>
-                {session.validation.is_valid ? '✓ Validated' : '✗ Issues Found'}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Empty State */}
-      {!session && !loading && (
-        <div style={{ textAlign: 'center', margin: '4rem 0', color: 'var(--text-muted)' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🧬</div>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-            Ready to Analyze
-          </h3>
-          <p style={{ fontSize: '0.875rem', maxWidth: '400px', margin: '0 auto' }}>
-            Enter a strategic pharma query above to deploy the agent swarm.
-            Each agent will independently retrieve, validate, and synthesize intelligence.
-          </p>
+          {error ? <div className="inline-alert inline-alert--error">{error}</div> : null}
         </div>
+
+        <aside className="hero-panel__aside surface">
+          <p className="eyebrow">Local runtime</p>
+          <div className="hero-stack">
+            <div className="hero-stack__item">
+              <span>State</span>
+              <strong>PostgreSQL + Redis</strong>
+            </div>
+            <div className="hero-stack__item">
+              <span>Task bus</span>
+              <strong>Kafka topics</strong>
+            </div>
+            <div className="hero-stack__item">
+              <span>Artifacts</span>
+              <strong>MinIO object store</strong>
+            </div>
+            <div className="hero-stack__item">
+              <span>Reasoning</span>
+              <strong>Offline fixtures</strong>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section className="metrics-grid">
+        <article className="surface metric-card">
+          <span className="metric-card__label">Session progress</span>
+          <strong className="metric-card__value">{progress}%</strong>
+          <div className="progress-track">
+            <div className="progress-track__fill" style={{ width: `${progress}%` }} />
+          </div>
+        </article>
+        <article className="surface metric-card">
+          <span className="metric-card__label">Completed tasks</span>
+          <strong className="metric-card__value">{completedTasks}</strong>
+          <p>{totalTasks === 0 ? 'No active session' : `${totalTasks - completedTasks} still running`}</p>
+        </article>
+        <article className="surface metric-card">
+          <span className="metric-card__label">Grounding score</span>
+          <strong className="metric-card__value">{session?.validation ? `${validationScore}%` : '--'}</strong>
+          <p>{session?.validation?.is_valid ? 'Validation passed' : 'Awaiting validation output'}</p>
+        </article>
+        <article className="surface metric-card">
+          <span className="metric-card__label">Decision</span>
+          <strong className="metric-card__value">{formatDecision(session?.decision || null)}</strong>
+          <p>{session?.updated_at ? new Date(session.updated_at).toLocaleString() : 'No session activity yet'}</p>
+        </article>
+      </section>
+
+      <section className="stage-strip">
+        {SESSION_STAGES.map((stage, index) => {
+          const normalized = stage.toLowerCase();
+          const isComplete = activeStageIndex > index || (!session && stage === 'PLANNING');
+          const isActive = activeStageIndex === index || (!session && stage === 'PLANNING');
+
+          return (
+            <article
+              key={stage}
+              className={`surface stage-card ${isActive ? 'stage-card--active' : ''} ${isComplete ? 'stage-card--complete' : ''}`}
+            >
+              <div className="stage-card__top">
+                <span className={`stage-dot stage-dot--${normalized}`} />
+                <span className="tiny-label">{String(index + 1).padStart(2, '0')}</span>
+              </div>
+              <h3>{formatStatus(stage)}</h3>
+              <p>
+                {stage === 'PLANNING' && 'Parse the strategy query and route work to the right pillars.'}
+                {stage === 'RETRIEVING' && 'Run deterministic evidence gathering across the local agent mesh.'}
+                {stage === 'VALIDATING' && 'Score grounding and identify cross-pillar conflicts before synthesis.'}
+                {stage === 'SYNTHESIZING' && 'Assemble the final recommendation and report artifact package.'}
+                {stage === 'COMPLETED' && 'Expose the decision, rationale, and downloadable report output.'}
+              </p>
+            </article>
+          );
+        })}
+      </section>
+
+      {!session ? (
+        <section className="capability-grid">
+          <article className="surface capability-card">
+            <p className="eyebrow">Planner</p>
+            <h3>Structured decomposition</h3>
+            <p>Translate one strategic question into deterministic pillar tasks and kick off the local workflow in one action.</p>
+          </article>
+          <article className="surface capability-card">
+            <p className="eyebrow">Retrievers</p>
+            <h3>Visible execution board</h3>
+            <p>Track each pillar from queue to completion with a board that reads like an operations room instead of a generic form.</p>
+          </article>
+          <article className="surface capability-card">
+            <p className="eyebrow">Supervisor</p>
+            <h3>Grounding-first decisions</h3>
+            <p>Surface conflicts, grounding quality, and execution state before you ever open the report artifact.</p>
+          </article>
+          <article className="surface capability-card">
+            <p className="eyebrow">Executor</p>
+            <h3>Downloadable local reports</h3>
+            <p>Publish report artifacts from MinIO with a clean handoff into the reports library and operations pages.</p>
+          </article>
+        </section>
+      ) : (
+        <>
+          <section className="section-heading">
+            <div>
+              <p className="eyebrow">Task board</p>
+              <h2>Current session</h2>
+            </div>
+            <div className="section-heading__actions">
+              <span className="tiny-label">Session {session.session_id.slice(0, 12)}</span>
+              {session.report_url ? (
+                <a className="button button--primary" href={session.report_url} target="_blank" rel="noreferrer">
+                  Download report
+                </a>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="task-grid">
+            {session.task_graph.map((task) => (
+              <article key={task.task_id} className="surface task-card">
+                <div className="task-card__row">
+                  <span className={`pillar-badge pillar-badge--${task.pillar.toLowerCase()}`}>
+                    {PILLAR_LABELS[task.pillar] || task.pillar}
+                  </span>
+                  <span className={`status-chip status-chip--${task.status.toLowerCase()}`}>
+                    {formatStatus(task.status)}
+                  </span>
+                </div>
+                <h3>{task.description}</h3>
+                <div className="task-card__footer">
+                  <span>{task.task_id.slice(0, 10)}</span>
+                  <span>{task.pillar}</span>
+                </div>
+              </article>
+            ))}
+          </section>
+
+          <section className="section-heading">
+            <div>
+              <p className="eyebrow">Findings snapshot</p>
+              <h2>Agent output</h2>
+            </div>
+            <Link className="button button--ghost" href="/admin">
+              Open operations
+            </Link>
+          </section>
+
+          <section className="results-grid">
+            {session.agent_results.length === 0 ? (
+              <div className="surface empty-panel">Agent findings will appear here as each retriever completes.</div>
+            ) : (
+              session.agent_results.map((result) => (
+                <article key={`${result.task_id}-${result.pillar}`} className="surface result-card">
+                  <div className="task-card__row">
+                    <span className={`pillar-badge pillar-badge--${result.pillar.toLowerCase()}`}>
+                      {PILLAR_LABELS[result.pillar] || result.pillar}
+                    </span>
+                    <span className="tiny-label">{Math.round(result.confidence * 100)}% confidence</span>
+                  </div>
+                  <ul className="detail-list">
+                    {summarizeFindings(result).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </article>
+              ))
+            )}
+          </section>
+
+          {session.decision ? (
+            <section className={`surface verdict-panel verdict-panel--${session.decision.toLowerCase().replace(/_/g, '-')}`}>
+              <div>
+                <p className="eyebrow">Outcome</p>
+                <h2>{formatDecision(session.decision)}</h2>
+                <p>{session.decision_rationale || 'Decision rationale has not been provided yet.'}</p>
+              </div>
+              <div className="verdict-panel__actions">
+                {session.report_url ? (
+                  <a className="button button--primary" href={session.report_url} target="_blank" rel="noreferrer">
+                    Open report artifact
+                  </a>
+                ) : null}
+                <Link className="button button--ghost" href="/reports">
+                  Review all sessions
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
+          {session.validation?.conflicts.length ? (
+            <section className="conflict-list">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Strategic risks</p>
+                  <h2>Conflict register</h2>
+                </div>
+              </div>
+              {session.validation.conflicts.map((conflict) => (
+                <article key={`${conflict.conflict_type}-${conflict.description}`} className="surface conflict-card">
+                  <div className="task-card__row">
+                    <span className="pill-label">{conflict.conflict_type.replace(/_/g, ' ')}</span>
+                    <span className={`status-chip status-chip--${conflict.severity.toLowerCase()}`}>
+                      {conflict.severity}
+                    </span>
+                  </div>
+                  <h3>{conflict.description}</h3>
+                  <p>{conflict.recommendation}</p>
+                </article>
+              ))}
+            </section>
+          ) : null}
+        </>
       )}
     </div>
   );

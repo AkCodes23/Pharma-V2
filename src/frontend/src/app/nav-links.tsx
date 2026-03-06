@@ -1,12 +1,12 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Dashboard' },
   { href: '/reports', label: 'Reports' },
-  { href: '/admin', label: 'Admin' },
+  { href: '/admin', label: 'Operations' },
 ];
 
 export function NavLinks() {
@@ -18,13 +18,7 @@ export function NavLinks() {
         <Link
           key={item.href}
           href={item.href}
-          className={pathname === item.href ? 'nav-active' : ''}
-          style={{
-            color: 'var(--text-secondary)',
-            textDecoration: 'none',
-            fontSize: '0.875rem',
-            fontWeight: 500,
-          }}
+          className={`nav-link ${pathname === item.href ? 'nav-link--active' : ''}`}
         >
           {item.label}
         </Link>

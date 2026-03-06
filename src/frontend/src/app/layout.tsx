@@ -1,42 +1,54 @@
 import type { Metadata } from 'next';
+
 import './globals.css';
 import { NavLinks } from './nav-links';
 
 export const metadata: Metadata = {
-  title: 'Pharma Agentic AI — Strategic Command Center',
-  description: 'Distributed multi-agent pharmaceutical intelligence platform. Real-time patent analysis, clinical trial monitoring, market intelligence, and safety signal detection.',
-  keywords: ['pharma', 'AI', 'patent cliff', 'generic drugs', 'clinical trials', 'market intelligence'],
+  title: 'Pharma Agentic AI | Standalone Demo',
+  description:
+    'Offline pharmaceutical strategy workspace for market-entry intelligence, retrieval progress, and downloadable demo reports.',
+  keywords: ['pharma', 'demo', 'market intelligence', 'clinical trials', 'patent strategy'],
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <html lang="en">
       <body>
-        <header className="header">
-          <div className="header__logo">
-            <div className="header__logo-icon">🧬</div>
-            <div>
-              <div className="header__title">Pharma Agentic AI</div>
-              <div className="header__subtitle">Strategic Command Center</div>
+        <div className="app-shell">
+          <div className="shell-rim" />
+          <header className="header">
+            <div className="header__brand">
+              <div className="brand-mark" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+              <div>
+                <div className="header__title">Pharma Agentic AI</div>
+                <div className="header__subtitle">Standalone Strategy Console</div>
+              </div>
             </div>
-          </div>
-          <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-            <NavLinks />
-            <span className="status-indicator status-indicator--healthy" title="System healthy" />
-          </nav>
-        </header>
-        <main className="app-container">
-          {children}
-        </main>
-        <footer className="footer">
-          <span>v0.1.0 • Pharma Agentic AI</span>
-          <span style={{ margin: '0 0.5rem' }}>•</span>
-          <span className="footer__badge">🔒 21 CFR Part 11</span>
-        </footer>
+            <nav className="header__nav" aria-label="Primary">
+              <NavLinks />
+              <div className="runtime-chip">
+                <span className="runtime-chip__dot" />
+                Demo mode
+              </div>
+            </nav>
+          </header>
+          <main className="app-container">{children}</main>
+          <footer className="footer">
+            <span>Standalone demo branch</span>
+            <span className="footer__divider" />
+            <span>Offline fixtures</span>
+            <span className="footer__divider" />
+            <span>Local report artifacts</span>
+          </footer>
+        </div>
       </body>
     </html>
   );
