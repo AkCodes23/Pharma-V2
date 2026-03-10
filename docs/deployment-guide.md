@@ -5,6 +5,8 @@ This document describes how to deploy the stack to Azure and how to verify runti
 ## 1. Deployment Architecture
 
 Provisioned from `infra/bicep/main.bicep`:
+- Azure API Management
+- Entra ID-backed identity integration
 - Managed identity
 - Log Analytics + App Insights
 - Azure OpenAI deployments
@@ -17,6 +19,14 @@ Provisioned from `infra/bicep/main.bicep`:
 - Storage account + reports container
 - Key Vault
 - Container Apps environment and app resources
+
+Azure production source-of-truth:
+- API ingress and identity flow: API Management + Entra ID
+- Task orchestration: Service Bus topics/subscriptions
+- Session state and validation records: Cosmos DB
+- Report artifacts and raw payload retention: Blob Storage
+- Knowledge retrieval: Azure AI Search
+- Shared cache and websocket fan-out: Redis
 
 ## 2. Prerequisites
 

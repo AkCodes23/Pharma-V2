@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useEffect, useCallback } from 'react';
 
 /* ── Types ──────────────────────────────────────────────── */
@@ -64,6 +65,7 @@ const PILLAR_CONFIG: Record<string, { icon: string; className: string; label: st
   COMMERCIAL: { icon: '📊', className: 'agent-card__pillar--commercial', label: 'Commercial' },
   SOCIAL: { icon: '🛡️', className: 'agent-card__pillar--social', label: 'Social' },
   KNOWLEDGE: { icon: '📚', className: 'agent-card__pillar--knowledge', label: 'Knowledge' },
+  NEWS: { icon: '📰', className: 'agent-card__pillar--news', label: 'News' },
 };
 
 const STATUS_CONFIG: Record<string, { dot: string; label: string }> = {
@@ -213,6 +215,51 @@ export default function Dashboard() {
           Deploy an agent swarm for real-time pharmaceutical market-entry analysis.
           100% citation-grounded. Zero hallucinations.
         </p>
+      </section>
+
+      <section className="glass-card" style={{ marginBottom: '2rem', overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gap: '1.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+          <div>
+            <div style={{
+              fontSize: '0.75rem',
+              color: 'var(--text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              marginBottom: '0.75rem',
+            }}>
+              Azure-first reference architecture
+            </div>
+            <h2 style={{ fontSize: '1.375rem', fontWeight: 800, marginBottom: '0.75rem' }}>
+              Planner → Service Bus → 6 retrievers → Supervisor → Executor
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: 1.6 }}>
+              Production flow is anchored on Azure API Management, Entra ID, Key Vault, Cosmos DB, Redis Cache,
+              Azure AI Search, Blob reports, and Azure-native telemetry.
+            </p>
+            <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+              <li>Planner orchestrates a DAG with six strategic retriever pillars.</li>
+              <li>Service Bus topics and subscriptions are the authoritative task bus contract.</li>
+              <li>Supervisor validates grounded evidence before Executor publishes the report package.</li>
+            </ul>
+          </div>
+
+          <div>
+            <Image
+              src="https://github.com/user-attachments/assets/b78d1376-a5cd-4a15-a285-d9a9f306542c"
+              alt="Azure reference architecture showing frontend, API Management, planner, retrievers, Cosmos DB, Redis, Supervisor, Executor, Blob reports, and Azure AI Search."
+              width={1600}
+              height={987}
+              style={{
+                width: '100%',
+                height: '100%',
+                minHeight: '220px',
+                objectFit: 'cover',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            />
+          </div>
+        </div>
       </section>
 
       {/* Query Input */}

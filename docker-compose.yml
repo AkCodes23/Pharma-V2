@@ -9,7 +9,8 @@
 #   docker compose down -v            Stop and remove volumes
 #
 # Architecture:
-#   planner (FastAPI:8000) → kafka → retrievers → postgres/redis → supervisor → executor
+#   Azure production topology remains APIM → Planner → Service Bus → Retrievers → Cosmos → Supervisor → Executor.
+#   This Compose file is the local developer harness for Redis/Postgres/Kafka/Celery and supporting observability.
 #   celery-worker handles PDF gen, RAG indexing, analytics
 #   celery-beat schedules periodic tasks (RAG re-index, stale session cleanup)
 #
