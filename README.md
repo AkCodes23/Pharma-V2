@@ -11,20 +11,25 @@ This repository currently supports:
 - Six retriever worker-services (Legal, Clinical, Commercial, Social, Knowledge, News)
 - MCP gateway (`:8010`)
 - Quality Evaluator and Prompt Enhancer services
-- Local stack via Docker Compose (Kafka + Redis + Postgres + observability)
-- Azure infrastructure via Bicep
+- Azure-first runtime contracts via API Management, Entra ID, Service Bus, Cosmos DB, Blob Storage, Redis, and AI Search
+- Local stack via Docker Compose for developer-side emulation and supporting analytics services
+
+## Azure Reference Architecture
+
+![Azure reference architecture](https://github.com/user-attachments/assets/b78d1376-a5cd-4a15-a285-d9a9f306542c)
 
 ## 1. System Overview
 
 Request lifecycle:
 1. User submits query to Planner.
-2. Planner decomposes intent into tasks and persists session state in Cosmos.
-3. Planner publishes one message per pillar to message bus.
-4. Retriever services consume pillar messages from Service Bus subscriptions.
-5. Each retriever executes deterministic tools and writes results to Cosmos.
-6. Supervisor validates grounding and conflict state.
-7. Executor synthesizes report, generates artifacts, completes session.
-8. Frontend or MCP clients poll/stream session status and fetch report output.
+2. Azure API Management fronts the Planner and injects caller identity from Entra ID.
+3. Planner decomposes intent into tasks and persists session state in Cosmos.
+4. Planner publishes one message per pillar to Azure Service Bus.
+5. Retriever services consume pillar messages from Service Bus subscriptions.
+6. Each retriever executes deterministic tools, supports degraded/partial evidence when required, and writes results to Cosmos.
+7. Supervisor validates grounding and conflict state.
+8. Executor synthesizes report artifacts into Blob Storage and returns final decision metadata.
+9. Frontend or MCP clients poll/stream session status and fetch report output.
 
 Current routing conventions:
 - Service Bus topics: `legal-tasks`, `clinical-tasks`, `commercial-tasks`, `social-tasks`, `knowledge-tasks`, `news-tasks`
@@ -43,6 +48,11 @@ Broker mode contract:
   `KAFKA_EVENT_HUBS_CONNECTION_STRING`; retriever task consumption still relies on Service Bus unless
   explicitly migrated.
 
+Azure deployment stance:
+- Treat Azure Service Bus, Cosmos DB, Blob Storage, Key Vault, Azure AI Search, Redis, API Management, and Entra ID
+  as the authoritative production topology.
+- Treat Docker Compose infrastructure as local developer support only; it does not replace the Azure contracts above.
+
 ## 2. Repository Structure
 
 - `src/agents/planner/`: Planner FastAPI app and decomposition/publishing flow
@@ -55,7 +65,7 @@ Broker mode contract:
 - `src/mcp/`: MCP server exposing platform tools/resources
 - `src/frontend/`: Next.js dashboard
 - `infra/bicep/main.bicep`: consolidated Azure provisioning
-- `docker-compose.yml`: complete local runtime stack
+- `docker-compose.yml`: local emulation stack for development and supporting services
 - `docs/`: onboarding, API, deployment, runbook, ADRs
 
 ## 3. Service Contracts
@@ -148,7 +158,7 @@ Common local defaults in Compose:
 
 ## 6. Running the Project
 
-### Option A: Full stack via Docker Compose (recommended for demo)
+### Option A: Full stack via Docker Compose (local developer sandbox)
 
 ```bash
 docker compose up -d --build
@@ -237,4 +247,3 @@ Before demo:
 - Full integration depends on external APIs and Azure credentials.
 - Some local tests are environment-sensitive.
 - WebSocket fan-out is Redis-backed in local mode and Web PubSub-backed when configured for Azure.
-

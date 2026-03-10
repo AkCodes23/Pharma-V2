@@ -6,7 +6,7 @@ and schema enforcement across the platform.
 """
 
 import pytest
-from datetime import datetime, timezone
+from pydantic import ValidationError
 
 from src.shared.models.enums import (
     AgentType,
@@ -23,12 +23,10 @@ from src.shared.models.schemas import (
     Citation,
     ConflictDetail,
     QueryParameters,
-    ServiceBusMessage,
     Session,
     TaskNode,
     ValidationResult,
 )
-
 
 # ── Citation Tests ──────────────────────────────────────────
 
@@ -154,7 +152,7 @@ class TestAgentResult:
 
     def test_confidence_bounds(self):
         """Confidence must be between 0.0 and 1.0."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             AgentResult(
                 task_id="task-001",
                 session_id="sess-001",
@@ -272,13 +270,17 @@ class TestEnums:
     """Tests for enum completeness and serialization."""
 
     def test_pillar_types(self):
-        """All 5 pillar types should exist."""
-        assert len(PillarType) == 5
+        """All 6 pillar types should exist."""
+        assert len(PillarType) == 6
         assert PillarType.LEGAL.value == "LEGAL"
+        assert PillarType.NEWS.value == "NEWS"
 
     def test_agent_types(self):
-        """All 8 agent types should exist."""
-        assert len(AgentType) == 8
+        """All 11 agent types should exist."""
+        assert len(AgentType) == 11
+        assert AgentType.NEWS_RETRIEVER.value == "NEWS_RETRIEVER"
+        assert AgentType.QUALITY_EVALUATOR.value == "QUALITY_EVALUATOR"
+        assert AgentType.PROMPT_ENHANCER.value == "PROMPT_ENHANCER"
 
     def test_session_status_lifecycle(self):
         """Session statuses should cover the full lifecycle."""
