@@ -70,11 +70,12 @@ export default function AdminPage() {
       const response = await fetch(`${API_BASE}/audit?limit=100`);
       if (!response.ok) throw new Error(`Audit API: ${response.status}`);
       const data = await response.json();
-      const entries: AuditEntryApiResponse[] = Array.isArray(data.entries)
-        ? data.entries
-        : Array.isArray(data)
-          ? data
-          : [];
+      let entries: AuditEntryApiResponse[] = [];
+      if (Array.isArray(data.entries)) {
+        entries = data.entries;
+      } else if (Array.isArray(data)) {
+        entries = data;
+      }
       setAuditEntries(entries.map((entry, i) => ({
         id: entry.id || entry._id || String(i),
         session_id: entry.session_id || '',

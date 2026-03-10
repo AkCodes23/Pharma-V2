@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from threading import Lock
 from typing import Any
 
 import uvicorn
@@ -110,13 +111,16 @@ class EvaluateRequest(BaseModel):
 
 app = FastAPI(title="Pharma Agentic AI - Quality Evaluator", version="0.1.0")
 _evaluator: QualityEvaluator | None = None
+_evaluator_lock = Lock()
 
 
 def get_evaluator() -> QualityEvaluator:
     """Lazily initialize the evaluator so imports remain test-friendly."""
     global _evaluator
     if _evaluator is None:
-        _evaluator = QualityEvaluator()
+        with _evaluator_lock:
+            if _evaluator is None:
+                _evaluator = QualityEvaluator()
     return _evaluator
 
 

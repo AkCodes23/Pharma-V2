@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from threading import Lock
 from typing import Any
 
 import uvicorn
@@ -114,13 +115,16 @@ class EnhanceRequest(BaseModel):
 
 app = FastAPI(title="Pharma Agentic AI - Prompt Enhancer", version="0.1.0")
 _enhancer: PromptEnhancer | None = None
+_enhancer_lock = Lock()
 
 
 def get_enhancer() -> PromptEnhancer:
     """Lazily initialize the enhancer so imports remain test-friendly."""
     global _enhancer
     if _enhancer is None:
-        _enhancer = PromptEnhancer()
+        with _enhancer_lock:
+            if _enhancer is None:
+                _enhancer = PromptEnhancer()
     return _enhancer
 
 

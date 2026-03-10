@@ -269,6 +269,7 @@ export default function Dashboard() {
       setTransportMode('ws');
       setPolling(false);
       void refreshSession(sessionId).catch(() => {
+        if (!active || socket.readyState === WebSocket.OPEN) return;
         setPolling(true);
       });
     };
@@ -276,8 +277,24 @@ export default function Dashboard() {
     socket.onmessage = (event) => {
       if (!active) return;
       try {
-        const payload = JSON.parse(event.data) as StreamEvent;
-        setLiveEvents((current) => [payload, ...current].slice(0, 6));
+        const payload = JSON.parse(event.data) as Partial<StreamEvent>;
+        if (
+          typeof payload.event_type === 'string' &&
+          typeof payload.message === 'string' &&
+          typeof payload.timestamp === 'number'
+        ) {
+          const nextEvent: StreamEvent = {
+            event_type: payload.event_type,
+            message: payload.message,
+            pillar: typeof payload.pillar === 'string' ? payload.pillar : undefined,
+            timestamp: payload.timestamp,
+            data: payload.data,
+          };
+          setLiveEvents((current) => [
+            nextEvent,
+            ...current,
+          ].slice(0, 6));
+        }
       } catch {
         // Ignore malformed stream messages
       }
@@ -325,6 +342,9 @@ export default function Dashboard() {
 
     try {
       const payload = await getSessionReport(sessionId, 'pdf') as { report_url: string };
+      if (!payload?.report_url) {
+        throw new Error('PDF URL not available');
+      }
       window.open(payload.report_url, '_blank', 'noopener,noreferrer');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch PDF report');
