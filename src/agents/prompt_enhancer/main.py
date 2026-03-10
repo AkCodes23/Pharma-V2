@@ -113,7 +113,15 @@ class EnhanceRequest(BaseModel):
 
 
 app = FastAPI(title="Pharma Agentic AI - Prompt Enhancer", version="0.1.0")
-_enhancer = PromptEnhancer()
+_enhancer: PromptEnhancer | None = None
+
+
+def get_enhancer() -> PromptEnhancer:
+    """Lazily initialize the enhancer so imports remain test-friendly."""
+    global _enhancer
+    if _enhancer is None:
+        _enhancer = PromptEnhancer()
+    return _enhancer
 
 
 @app.get("/health")
@@ -123,7 +131,7 @@ async def health_check() -> dict[str, str]:
 
 @app.post("/enhance")
 async def enhance(request: EnhanceRequest) -> dict[str, Any]:
-    return await _enhancer.enhance(
+    return await get_enhancer().enhance(
         query=request.query,
         pillar=request.pillar,
         task_description=request.task_description,

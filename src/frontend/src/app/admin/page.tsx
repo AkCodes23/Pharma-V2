@@ -25,6 +25,19 @@ interface AgentMetric {
   total_invocations: number;
 }
 
+interface AuditEntryApiResponse {
+  id?: string;
+  _id?: string;
+  session_id?: string;
+  user_id?: string;
+  agent_type?: string;
+  agent_id?: string;
+  action?: string;
+  timestamp?: string;
+  created_at?: string;
+  payload_hash?: string;
+}
+
 /* ── API Configuration ──────────────────────────────────── */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -57,15 +70,19 @@ export default function AdminPage() {
       const response = await fetch(`${API_BASE}/audit?limit=100`);
       if (!response.ok) throw new Error(`Audit API: ${response.status}`);
       const data = await response.json();
-      const entries = data.entries || data || [];
-      setAuditEntries(entries.map((e: any, i: number) => ({
-        id: e.id || e._id || String(i),
-        session_id: e.session_id || '',
-        user_id: e.user_id || 'system',
-        agent_type: e.agent_type || e.agent_id?.split('-')[0]?.toUpperCase() || '',
-        action: e.action || '',
-        timestamp: e.timestamp || e.created_at || new Date().toISOString(),
-        payload_hash: e.payload_hash || '',
+      const entries: AuditEntryApiResponse[] = Array.isArray(data.entries)
+        ? data.entries
+        : Array.isArray(data)
+          ? data
+          : [];
+      setAuditEntries(entries.map((entry, i) => ({
+        id: entry.id || entry._id || String(i),
+        session_id: entry.session_id || '',
+        user_id: entry.user_id || 'system',
+        agent_type: entry.agent_type || entry.agent_id?.split('-')[0]?.toUpperCase() || '',
+        action: entry.action || '',
+        timestamp: entry.timestamp || entry.created_at || new Date().toISOString(),
+        payload_hash: entry.payload_hash || '',
       })));
     } catch (err) {
       console.error('Failed to fetch audit trail:', err);

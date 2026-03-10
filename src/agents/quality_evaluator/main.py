@@ -109,7 +109,15 @@ class EvaluateRequest(BaseModel):
 
 
 app = FastAPI(title="Pharma Agentic AI - Quality Evaluator", version="0.1.0")
-_evaluator = QualityEvaluator()
+_evaluator: QualityEvaluator | None = None
+
+
+def get_evaluator() -> QualityEvaluator:
+    """Lazily initialize the evaluator so imports remain test-friendly."""
+    global _evaluator
+    if _evaluator is None:
+        _evaluator = QualityEvaluator()
+    return _evaluator
 
 
 @app.get("/health")
@@ -119,7 +127,7 @@ async def health_check() -> dict[str, str]:
 
 @app.post("/evaluate")
 async def evaluate(request: EvaluateRequest) -> dict[str, Any]:
-    return await _evaluator.evaluate(
+    return await get_evaluator().evaluate(
         query=request.query,
         pillar=request.pillar,
         result=request.result,

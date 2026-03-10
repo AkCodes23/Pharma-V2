@@ -34,6 +34,7 @@ node_modules/
 .next/
 out/
 .turbo/
+*.tsbuildinfo
 
 # Azure
 .azure/

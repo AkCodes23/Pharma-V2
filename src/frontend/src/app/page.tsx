@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 
 /* ── Types ──────────────────────────────────────────────── */
 
@@ -36,11 +36,27 @@ interface SessionResponse {
   updated_at: string;
 }
 
+interface CreateSessionResponse {
+  session_id: string;
+  status: string;
+  task_count: number;
+  tasks: TaskNode[];
+  websocket_url: string;
+}
+
+interface StreamEvent {
+  event_type: string;
+  message: string;
+  pillar?: string;
+  timestamp: number;
+  data?: Record<string, unknown>;
+}
+
 /* ── API ────────────────────────────────────────────────── */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-async function createSession(query: string): Promise<{ session_id: string; tasks: TaskNode[] }> {
+async function createSession(query: string): Promise<CreateSessionResponse> {
   const res = await fetch(`${API_URL}/api/v1/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -56,6 +72,30 @@ async function getSession(sessionId: string): Promise<SessionResponse> {
   return res.json();
 }
 
+async function getSessionReport(sessionId: string, format: 'pdf' | 'summary' | 'json') {
+  const res = await fetch(`${API_URL}/api/v1/sessions/${sessionId}/report?format=${format}`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+function getWebSocketUrl(path: string): string {
+  const url = new URL(API_URL);
+  const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${url.host}${path}`;
+}
+
+function formatDuration(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+  }
+
+  return `${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+}
+
 /* ── Pillar Config ──────────────────────────────────────── */
 
 const PILLAR_CONFIG: Record<string, { icon: string; className: string; label: string }> = {
@@ -64,6 +104,7 @@ const PILLAR_CONFIG: Record<string, { icon: string; className: string; label: st
   COMMERCIAL: { icon: '📊', className: 'agent-card__pillar--commercial', label: 'Commercial' },
   SOCIAL: { icon: '🛡️', className: 'agent-card__pillar--social', label: 'Social' },
   KNOWLEDGE: { icon: '📚', className: 'agent-card__pillar--knowledge', label: 'Knowledge' },
+  NEWS: { icon: '📰', className: 'agent-card__pillar--news', label: 'News' },
 };
 
 const STATUS_CONFIG: Record<string, { dot: string; label: string }> = {
@@ -132,10 +173,24 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
+  const [websocketPath, setWebsocketPath] = useState<string | null>(null);
+  const [transportMode, setTransportMode] = useState<'idle' | 'ws' | 'polling'>('idle');
+  const [liveEvents, setLiveEvents] = useState<StreamEvent[]>([]);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
 
   const groundingScoreAnimated = useAnimatedCounter(
     session?.validation ? Math.round(session.validation.grounding_score * 100) : 0
   );
+
+  const refreshSession = useCallback(async (activeSessionId: string) => {
+    const data = await getSession(activeSessionId);
+    setSession(data);
+    if (['COMPLETED', 'FAILED'].includes(data.status)) {
+      setPolling(false);
+    }
+    return data;
+  }, []);
 
   /* ── Submit Query ───────────────────────────────────── */
 
@@ -145,10 +200,28 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     setSession(null);
+    setLiveEvents([]);
+    setCopyFeedback(null);
+    setTransportMode('idle');
 
     try {
       const result = await createSession(query);
       setSessionId(result.session_id);
+      setWebsocketPath(result.websocket_url);
+      const nowIso = new Date().toISOString();
+      setSession({
+        session_id: result.session_id,
+        status: result.status,
+        query,
+        task_graph: result.tasks,
+        agent_results: [],
+        validation: null,
+        decision: null,
+        decision_rationale: null,
+        report_url: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
       setPolling(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create session');
@@ -173,20 +246,123 @@ export default function Dashboard() {
   useEffect(() => {
     if (!polling || !sessionId) return;
 
-    const interval = setInterval(async () => {
-      try {
-        const data = await getSession(sessionId);
-        setSession(data);
-        if (['COMPLETED', 'FAILED'].includes(data.status)) {
-          setPolling(false);
-        }
-      } catch {
+    setTransportMode('polling');
+    void refreshSession(sessionId);
+
+    const interval = setInterval(() => {
+      void refreshSession(sessionId).catch(() => {
         // Silently retry on poll failure
-      }
+      });
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [polling, sessionId]);
+  }, [polling, refreshSession, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || !websocketPath) return;
+
+    let active = true;
+    const socket = new WebSocket(getWebSocketUrl(websocketPath));
+
+    socket.onopen = () => {
+      if (!active) return;
+      setTransportMode('ws');
+      setPolling(false);
+      void refreshSession(sessionId).catch(() => {
+        setPolling(true);
+      });
+    };
+
+    socket.onmessage = (event) => {
+      if (!active) return;
+      try {
+        const payload = JSON.parse(event.data) as StreamEvent;
+        setLiveEvents((current) => [payload, ...current].slice(0, 6));
+      } catch {
+        // Ignore malformed stream messages
+      }
+      void refreshSession(sessionId).catch(() => {
+        setPolling(true);
+      });
+    };
+
+    socket.onerror = () => {
+      if (!active) return;
+      setPolling(true);
+    };
+
+    socket.onclose = () => {
+      if (!active) return;
+      setTransportMode((current) => (current === 'ws' ? 'polling' : current));
+      setPolling(true);
+    };
+
+    return () => {
+      active = false;
+      socket.close();
+    };
+  }, [refreshSession, sessionId, websocketPath]);
+
+  useEffect(() => {
+    if (!session || ['COMPLETED', 'FAILED'].includes(session.status)) return;
+
+    const timer = setInterval(() => {
+      setClockNow(Date.now());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [session]);
+
+  useEffect(() => {
+    if (!copyFeedback) return;
+
+    const timer = setTimeout(() => setCopyFeedback(null), 2500);
+    return () => clearTimeout(timer);
+  }, [copyFeedback]);
+
+  const handleDownloadPdf = useCallback(async () => {
+    if (!sessionId) return;
+
+    try {
+      const payload = await getSessionReport(sessionId, 'pdf') as { report_url: string };
+      window.open(payload.report_url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch PDF report');
+    }
+  }, [sessionId]);
+
+  const handleCopyReport = useCallback(async (format: 'summary' | 'json') => {
+    if (!sessionId) return;
+
+    try {
+      const payload = await getSessionReport(sessionId, format);
+      const text = format === 'json'
+        ? JSON.stringify(payload, null, 2)
+        : [
+            `Decision: ${String((payload as { decision?: string }).decision ?? 'Pending')}`,
+            `Grounding Score: ${String((payload as { grounding_score?: number }).grounding_score ?? 'N/A')}`,
+            '',
+            String((payload as { decision_rationale?: string }).decision_rationale ?? 'No rationale available yet.'),
+          ].join('\n');
+      await navigator.clipboard.writeText(text);
+      setCopyFeedback(format === 'json' ? 'JSON copied' : 'Summary copied');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to copy report content');
+    }
+  }, [sessionId]);
+
+  const elapsedTime = useMemo(() => {
+    if (!session) return null;
+
+    const start = Date.parse(session.created_at);
+    const end = ['COMPLETED', 'FAILED'].includes(session.status)
+      ? Date.parse(session.updated_at)
+      : clockNow;
+
+    if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
+
+    return formatDuration(Math.floor((end - start) / 1000));
+  }, [clockNow, session]);
 
   /* ── Render ─────────────────────────────────────────── */
 
@@ -332,9 +508,25 @@ export default function Dashboard() {
               <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>
                 Agent Swarm Progress
               </span>
-              <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                {Math.round(progress)}%
-              </span>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                {elapsedTime && (
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                    ⏱ {elapsedTime}
+                  </span>
+                )}
+                <span style={{
+                  fontSize: '0.75rem',
+                  color: transportMode === 'ws' ? 'var(--accent-emerald)' : 'var(--text-muted)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '999px',
+                  padding: '0.2rem 0.55rem',
+                }}>
+                  {transportMode === 'ws' ? 'Live WebSocket' : transportMode === 'polling' ? 'Polling Fallback' : 'Initializing'}
+                </span>
+                <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                  {Math.round(progress)}%
+                </span>
+              </div>
             </div>
             <div className="progress-bar">
               <div className="progress-bar__fill" style={{ width: `${progress}%` }} />
@@ -384,6 +576,62 @@ export default function Dashboard() {
                 <div className="decision-banner__rationale">
                   {session.decision_rationale}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Report Export */}
+          {(session.status === 'COMPLETED' || session.report_url) && (
+            <div className="glass-card" style={{ margin: '1rem 0', display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  One-Click Report Export
+                </div>
+                <div style={{ color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+                  Download the PDF or copy the synthesized summary / JSON payload for downstream workflows.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button className="query-submit-btn" onClick={handleDownloadPdf} type="button">
+                  📄 Download PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyReport('summary')}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    background: 'var(--bg-glass)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-secondary)',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font-sans)',
+                  }}
+                >
+                  📝 Copy Summary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyReport('json')}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    background: 'var(--bg-glass)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-secondary)',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font-sans)',
+                  }}
+                >
+                  🧾 Copy JSON
+                </button>
+                {copyFeedback && (
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--accent-emerald)', fontWeight: 600 }}>
+                    {copyFeedback}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -439,6 +687,48 @@ export default function Dashboard() {
                 color: session.validation.is_valid ? 'var(--accent-emerald)' : 'var(--accent-red)',
               }}>
                 {session.validation.is_valid ? '✓ Validated' : '✗ Issues Found'}
+              </div>
+            </div>
+          )}
+
+          {/* Live Activity Feed */}
+          {liveEvents.length > 0 && (
+            <div className="glass-card" style={{ margin: '1rem 0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Live Activity
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', marginTop: '0.35rem' }}>
+                    Streaming agent updates from the planner WebSocket channel.
+                  </div>
+                </div>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--accent-indigo)', fontWeight: 600 }}>
+                  {liveEvents.length} recent events
+                </span>
+              </div>
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                {liveEvents.map((event) => (
+                  <div
+                    key={`${event.timestamp}-${event.message}`}
+                    style={{
+                      padding: '0.875rem 1rem',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'rgba(15, 23, 42, 0.35)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--accent-indigo)', fontWeight: 700, textTransform: 'uppercase' }}>
+                        {event.pillar || event.event_type.replace(/_/g, ' ')}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                        {new Date(event.timestamp * 1000).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <div style={{ color: 'var(--text-secondary)' }}>{event.message}</div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
