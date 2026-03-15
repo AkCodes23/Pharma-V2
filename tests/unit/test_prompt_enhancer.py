@@ -21,16 +21,13 @@ from src.agents.prompt_enhancer.main import PromptEnhancer
 
 @pytest.fixture
 def enhancer() -> PromptEnhancer:
-    with patch("src.agents.prompt_enhancer.main.get_settings") as mock_settings:
-        settings = MagicMock()
-        settings.azure_openai = MagicMock()
-        settings.azure_openai.endpoint = "https://test.openai.azure.com"
-        settings.azure_openai.api_key = "test-key"
-        settings.azure_openai.api_version = "2024-12-01-preview"
-        settings.azure_openai.deployment_name = "gpt-4o"
-        mock_settings.return_value = settings
-        e = PromptEnhancer()
-    return e
+    settings = MagicMock()
+    settings.azure_openai = MagicMock()
+    settings.azure_openai.endpoint = "https://test.openai.azure.com"
+    settings.azure_openai.api_key = "test-key"
+    settings.azure_openai.api_version = "2024-12-01-preview"
+    settings.azure_openai.deployment_name = "gpt-4o"
+    return PromptEnhancer(settings=settings)
 
 
 def _mock_openai_for_response(response_dict: dict) -> MagicMock:
@@ -99,6 +96,7 @@ class TestEnhanceHappyPath:
                 "changes_made": [f"Applied {strategy}"],
             }
             mock_cls = _mock_openai_for_response(enhance_response)
+            enhancer._client = None  # Reset cached client to use patched mock
             with _patch_openai_import(mock_cls):
                 result = await enhancer.enhance("q", "LEGAL", "desc", {})
             assert result["strategy_used"] == strategy
