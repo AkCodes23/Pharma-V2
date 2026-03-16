@@ -45,18 +45,31 @@ Respond in strict JSON:
     "suggestions": ["<suggestion1>"]
 }}"""
 
-    def __init__(self) -> None:
-        self._settings = get_settings()
+    def __init__(self, settings: Any | None = None) -> None:
+        # Lazy-load settings and OpenAI client to avoid expensive imports on module load.
+        self._settings = settings
+        self._client = None
+
+    def _get_settings(self):
+        if self._settings is None:
+            self._settings = get_settings()
+        return self._settings
+
+    def _get_client(self):
+        if self._client is None:
+            from openai import AzureOpenAI
+
+            cfg = self._get_settings().azure_openai
+            self._client = AzureOpenAI(
+                azure_endpoint=cfg.endpoint,
+                api_key=cfg.api_key,
+                api_version=cfg.api_version,
+            )
+        return self._client
 
     async def evaluate(self, query: str, pillar: str, result: dict[str, Any]) -> dict[str, Any]:
         try:
-            from openai import AzureOpenAI
-
-            client = AzureOpenAI(
-                azure_endpoint=self._settings.azure_openai.endpoint,
-                api_key=self._settings.azure_openai.api_key,
-                api_version=self._settings.azure_openai.api_version,
-            )
+            client = self._get_client()
 
             prompt = self.EVALUATION_PROMPT.format(
                 query=query,
@@ -65,7 +78,7 @@ Respond in strict JSON:
             )
 
             response = client.chat.completions.create(
-                model=self._settings.azure_openai.deployment_name,
+                model=self._get_settings().azure_openai.deployment_name,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
                 temperature=0.0,
@@ -109,7 +122,14 @@ class EvaluateRequest(BaseModel):
 
 
 app = FastAPI(title="Pharma Agentic AI - Quality Evaluator", version="0.1.0")
-_evaluator = QualityEvaluator()
+_evaluator: QualityEvaluator | None = None
+
+
+def get_evaluator() -> QualityEvaluator:
+    global _evaluator
+    if _evaluator is None:
+        _evaluator = QualityEvaluator()
+    return _evaluator
 
 
 @app.get("/health")
@@ -119,7 +139,8 @@ async def health_check() -> dict[str, str]:
 
 @app.post("/evaluate")
 async def evaluate(request: EvaluateRequest) -> dict[str, Any]:
-    return await _evaluator.evaluate(
+    evaluator = get_evaluator()
+    return await evaluator.evaluate(
         query=request.query,
         pillar=request.pillar,
         result=request.result,

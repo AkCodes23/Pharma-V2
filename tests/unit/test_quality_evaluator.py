@@ -22,16 +22,13 @@ from src.agents.quality_evaluator.main import QualityEvaluator
 
 @pytest.fixture
 def evaluator() -> QualityEvaluator:
-    with patch("src.agents.quality_evaluator.main.get_settings") as mock_settings:
-        settings = MagicMock()
-        settings.azure_openai = MagicMock()
-        settings.azure_openai.endpoint = "https://test.openai.azure.com"
-        settings.azure_openai.api_key = "test-key"
-        settings.azure_openai.api_version = "2024-12-01-preview"
-        settings.azure_openai.deployment_name = "gpt-4o"
-        mock_settings.return_value = settings
-        e = QualityEvaluator()
-    return e
+    settings = MagicMock()
+    settings.azure_openai = MagicMock()
+    settings.azure_openai.endpoint = "https://test.openai.azure.com"
+    settings.azure_openai.api_key = "test-key"
+    settings.azure_openai.api_version = "2024-12-01-preview"
+    settings.azure_openai.deployment_name = "gpt-4o"
+    return QualityEvaluator(settings=settings)
 
 
 def _mock_openai_for_scores(scores_response: dict) -> MagicMock:

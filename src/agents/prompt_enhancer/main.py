@@ -50,8 +50,28 @@ Respond in strict JSON:
     "changes_made": ["<change1>", "<change2>"]
 }}"""
 
-    def __init__(self) -> None:
-        self._settings = get_settings()
+    def __init__(self, settings: Any | None = None) -> None:
+        # Settings and OpenAI client are loaded lazily to avoid expensive
+        # initialization during module import and to allow dependency injection in tests.
+        self._settings = settings
+        self._client = None
+
+    def _get_settings(self):
+        if self._settings is None:
+            self._settings = get_settings()
+        return self._settings
+
+    def _get_client(self):
+        if self._client is None:
+            from openai import AzureOpenAI
+
+            cfg = self._get_settings().azure_openai
+            self._client = AzureOpenAI(
+                azure_endpoint=cfg.endpoint,
+                api_key=cfg.api_key,
+                api_version=cfg.api_version,
+            )
+        return self._client
 
     async def enhance(
         self,
@@ -61,13 +81,7 @@ Respond in strict JSON:
         quality_evaluation: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            from openai import AzureOpenAI
-
-            client = AzureOpenAI(
-                azure_endpoint=self._settings.azure_openai.endpoint,
-                api_key=self._settings.azure_openai.api_key,
-                api_version=self._settings.azure_openai.api_version,
-            )
+            client = self._get_client()
 
             prompt = self.ENHANCEMENT_PROMPT.format(
                 query=query,
@@ -81,7 +95,7 @@ Respond in strict JSON:
             )
 
             response = client.chat.completions.create(
-                model=self._settings.azure_openai.deployment_name,
+                model=self._get_settings().azure_openai.deployment_name,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
                 temperature=0.3,
@@ -113,7 +127,14 @@ class EnhanceRequest(BaseModel):
 
 
 app = FastAPI(title="Pharma Agentic AI - Prompt Enhancer", version="0.1.0")
-_enhancer = PromptEnhancer()
+_enhancer: PromptEnhancer | None = None
+
+
+def get_enhancer() -> PromptEnhancer:
+    global _enhancer
+    if _enhancer is None:
+        _enhancer = PromptEnhancer()
+    return _enhancer
 
 
 @app.get("/health")
@@ -123,7 +144,8 @@ async def health_check() -> dict[str, str]:
 
 @app.post("/enhance")
 async def enhance(request: EnhanceRequest) -> dict[str, Any]:
-    return await _enhancer.enhance(
+    enhancer = get_enhancer()
+    return await enhancer.enhance(
         query=request.query,
         pillar=request.pillar,
         task_description=request.task_description,
