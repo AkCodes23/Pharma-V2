@@ -70,7 +70,7 @@ This prevents full workflow collapse due to single-source failures.
 ## 6. Azure Operations Guidance
 
 - Use alerts on DLQ depth, retriever failure rate, and timeout spikes.
-- Track `pharma.tasks.failed` and latency histograms in telemetry (metric namespace; not a broker topic name).
+- Track telemetry metrics as implemented in `src/shared/infra/telemetry.py` (for example `pharma.tasks.failed`), and treat them as metric names only (not broker topic names; see `agents.md` section 9 for authoritative broker topic naming).
 - Configure autoscaling for queue depth and CPU pressure.
 - Run controlled chaos drills in non-production environments.
 

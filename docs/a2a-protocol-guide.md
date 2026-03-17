@@ -38,7 +38,7 @@ Transport abstraction supports:
 - Service Bus via broker abstraction in production-oriented flows
 
 Maintain one canonical contract regardless of transport backend.
-Note: this event stream is distinct from retriever task topics (`legal-tasks`, `clinical-tasks`, etc.), which remain the source-of-truth naming convention for pillar execution.
+Note: this event stream is distinct from retriever task topics (`legal-tasks`, `clinical-tasks`, etc.), which remain the source-of-truth naming convention for pillar execution (see `agents.md` section 9 and `claude.md` section 3.2).
 
 ## 4. Reliability Controls
 

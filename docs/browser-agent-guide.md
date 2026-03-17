@@ -1,6 +1,7 @@
 # Browser Agent and Web Retrieval Security Guide
 
 This repository currently ships retriever agents and does **not** expose a first-party `browser_agent` service in `src/`.
+If introduced later, keep the implementation under the existing agent structure (for example `src/agents/retrievers/browser/` with a dedicated service entrypoint) and document its runtime contract in `agents.md`.
 
 When introducing browser automation for regulated-source capture, use this guide to align implementation with Azure production controls.
 
