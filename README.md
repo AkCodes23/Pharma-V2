@@ -240,6 +240,12 @@ Before demo:
 - [API Integration Guide](docs/api-integration-guide.md)
 - [Deployment Guide](docs/deployment-guide.md)
 - [Operational Runbook](docs/runbook.md)
+- [Frontend Architecture Guide](docs/frontend-architecture.md)
+- [Resilience and Failure Modes Guide](docs/resilience-guide.md)
+- [Caching Strategy Guide](docs/caching-strategy.md)
+- [Browser Agent and Web Retrieval Security Guide](docs/browser-agent-guide.md)
+- [A2A Protocol Guide](docs/a2a-protocol-guide.md)
+- [ML Training Pipeline (Azure Enablement)](docs/ml-training-pipeline-azure.md)
 - [Architecture Decision Records](docs/adr.md)
 
 ## 10. Known Constraints
