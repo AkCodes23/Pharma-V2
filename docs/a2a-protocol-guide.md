@@ -28,9 +28,9 @@ Envelope model: `A2AMessage`.
 
 ## 3. Transport and Topics
 
-Current protocol implementation publishes to:
+Current protocol implementation publishes A2A event messages to:
 
-- `pharma.events.a2a`
+- `pharma.events.a2a` (A2A event stream)
 
 Transport abstraction supports:
 
@@ -38,6 +38,7 @@ Transport abstraction supports:
 - Service Bus via broker abstraction in production-oriented flows
 
 Maintain one canonical contract regardless of transport backend.
+Note: this event stream is distinct from retriever task topics (`legal-tasks`, `clinical-tasks`, etc.), which remain the source-of-truth naming convention for pillar execution.
 
 ## 4. Reliability Controls
 
