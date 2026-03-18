@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,8 +26,14 @@ class AzureOpenAIConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AZURE_OPENAI_")
 
-    endpoint: str = Field(..., description="Azure OpenAI endpoint URL")
-    api_key: str = Field(..., description="Azure OpenAI API key")
+    endpoint: str = Field(
+        default="https://example.openai.azure.com",
+        description="Azure OpenAI endpoint URL",
+    )
+    api_key: str = Field(
+        default="local-dev-key",
+        description="Azure OpenAI API key",
+    )
     deployment_name: str = Field(default="gpt-4o", description="Model deployment name")
     api_version: str = Field(default="2024-12-01-preview", description="API version")
 
@@ -348,6 +354,15 @@ class Settings(BaseSettings):
     def azure_openai(self) -> AzureOpenAIConfig:
         """Alias for backward compatibility with RAG engine and other modules."""
         return self.openai
+
+    @model_validator(mode="after")
+    def _require_openai_in_prod(self) -> Settings:
+        """Ensure production/staging are not using placeholder OpenAI defaults."""
+        env = self.app.env.lower()
+        if env in ("production", "staging"):
+            if self.openai.endpoint.startswith("https://example.") or self.openai.api_key == "local-dev-key":
+                raise ValueError("Azure OpenAI configuration must be set for production/staging")
+        return self
 
 
 @lru_cache(maxsize=1)

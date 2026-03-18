@@ -177,8 +177,8 @@ class A2AProtocol:
         if self._broker:
             await self._broker.publish(
                 topic="pharma.events.a2a",
-                message=message.model_dump(),
                 key=session_id,
+                message=message.model_dump(),
             )
 
         logger.info(
@@ -223,8 +223,8 @@ class A2AProtocol:
         if self._broker:
             await self._broker.publish(
                 topic="pharma.events.a2a",
-                message=message.model_dump(),
                 key=session_id,
+                message=message.model_dump(),
             )
 
     async def escalate(
@@ -257,8 +257,8 @@ class A2AProtocol:
         if self._broker:
             await self._broker.publish(
                 topic="pharma.events.a2a",
-                message=message.model_dump(),
                 key=session_id,
+                message=message.model_dump(),
             )
 
         logger.warning(
