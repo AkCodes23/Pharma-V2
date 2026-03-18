@@ -23,6 +23,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+try:
+    from azure.identity import DefaultAzureCredential  # type: ignore
+    from azure.keyvault.secrets import SecretClient  # type: ignore
+except Exception:  # pragma: no cover - optional dependency in local/dev
+    DefaultAzureCredential = None  # type: ignore[assignment]
+    SecretClient = None  # type: ignore[assignment]
+
 # Mapping: Key Vault secret name → environment variable name
 _SECRET_MAP: dict[str, str] = {
     "azure-openai-api-key": "AZURE_OPENAI_API_KEY",
@@ -73,8 +80,8 @@ def resolve_secrets_from_keyvault(
         return {}
 
     try:
-        from azure.identity import DefaultAzureCredential
-        from azure.keyvault.secrets import SecretClient
+        if DefaultAzureCredential is None or SecretClient is None:
+            raise ImportError("azure-identity or azure-keyvault-secrets not available")
 
         credential = DefaultAzureCredential()
         client = SecretClient(vault_url=vault_url, credential=credential)

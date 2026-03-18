@@ -368,8 +368,8 @@ class AgentMesh:
             )
             await self._broker.publish(
                 topic="pharma.events.a2a",
-                message=message.model_dump(),
                 key=request.session_id,
+                message=message.model_dump(),
             )
             return AgentInvokeResponse(
                 success=True,

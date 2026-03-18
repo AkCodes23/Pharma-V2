@@ -97,12 +97,14 @@ def _split_recursive(
         stripped = text.strip()
         return [stripped] if stripped else []
 
+    step = max(1, chunk_size_chars - chunk_overlap_chars)
+
     # Try each separator in priority order
     for sep in separators:
         if sep == "":
             # Hard split — last resort
             chunks = []
-            for i in range(0, len(text), chunk_size_chars - chunk_overlap_chars):
+            for i in range(0, len(text), step):
                 chunk = text[i : i + chunk_size_chars].strip()
                 if chunk:
                     chunks.append(chunk)

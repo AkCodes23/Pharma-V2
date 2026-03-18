@@ -17,10 +17,12 @@ Design pattern: Strategy pattern with factory function.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Callable
-
+from uuid import uuid4
 
 from src.shared.config import get_settings
 
@@ -37,7 +39,7 @@ class MessageBroker(ABC):
     """
 
     @abstractmethod
-    async def publish(self, topic: str, message: dict[str, Any], key: str | None = None) -> None:
+    async def publish(self, topic: str, key: str | None, message: dict[str, Any]) -> None:
         """Publish a message to a topic/queue."""
         ...
 
@@ -73,13 +75,25 @@ class KafkaBroker(MessageBroker):
     async def start(self) -> None:
         await self._producer.start()
 
-    async def publish(self, topic: str, message: dict[str, Any], key: str | None = None) -> None:
-        await self._producer.publish_event(
-            topic=topic,
-            event_type=message.get("event_type", "unknown"),
-            data=message,
-            key=key,
-        )
+    async def publish(self, topic: str, key: str | None, message: dict[str, Any]) -> None:
+        payload = message if isinstance(message, dict) else {"data": message}
+
+        send_and_wait = getattr(self._producer, "send_and_wait", None)
+        if callable(send_and_wait):
+            await send_and_wait(topic=topic, value=payload, key=key)
+            return
+
+        publish_event = getattr(self._producer, "publish_event", None)
+        if callable(publish_event):
+            await publish_event(
+                topic=topic,
+                event_type=payload.get("event_type", "unknown"),
+                data=payload,
+                key=key,
+            )
+            return
+
+        raise RuntimeError("Kafka producer not initialized")
 
     async def publish_task(self, pillar: str, message_data: dict[str, Any], session_id: str) -> None:
         await self._producer.publish_task(pillar, message_data, session_id)
@@ -112,10 +126,44 @@ class ServiceBusBroker(MessageBroker):
         # ServiceBusPublisher initializes on construction
         pass
 
-    async def publish(self, topic: str, message: dict[str, Any], key: str | None = None) -> None:
+    async def publish(self, topic: str, key: str | None, message: dict[str, Any]) -> None:
+        import asyncio
+        import json
+        from uuid import uuid4
+
+        from azure.servicebus import ServiceBusMessage as AzureMessage
+        from pydantic import ValidationError
         from src.shared.models.schemas import ServiceBusMessage
-        sb_message = ServiceBusMessage.model_validate(message)
-        self._publisher.publish_task(sb_message)
+
+        payload = message if isinstance(message, dict) else {"data": message}
+
+        try:
+            sb_message = ServiceBusMessage.model_validate(payload)
+            self._publisher.publish_task(sb_message)
+            return
+        except ValidationError:
+            logger.debug(
+                "ServiceBusBroker publish payload not a ServiceBusMessage; using raw envelope",
+                extra={"topic": topic},
+            )
+
+        publish_fn = getattr(self._publisher, "publish", None)
+        if callable(publish_fn):
+            publish_fn(topic, key, payload)
+            return
+
+        try:
+            sender = self._publisher._client.get_topic_sender(topic_name=topic)  # type: ignore[attr-defined]
+            azure_msg = AzureMessage(body=json.dumps(payload, default=str))
+            azure_msg.message_id = key or payload.get("message_id") or str(uuid4())
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, sender.send_messages, azure_msg)
+        except Exception:
+            logger.warning(
+                "ServiceBusBroker publish fallback failed",
+                extra={"topic": topic},
+                exc_info=True,
+            )
 
     async def publish_task(self, pillar: str, message_data: dict[str, Any], session_id: str) -> None:
         from src.shared.models.schemas import ServiceBusMessage

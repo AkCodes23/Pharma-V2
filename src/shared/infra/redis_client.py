@@ -126,6 +126,19 @@ class RedisClient:
         """Raw Redis client for advanced operations."""
         return self._client
 
+    @client.setter
+    def client(self, value: redis.Redis) -> None:
+        """
+        Allow injecting a Redis client (e.g., fakeredis) for tests.
+
+        Ensures TTL defaults are initialized when __init__ is bypassed.
+        """
+        self._client = value
+        if not hasattr(self, "_session_ttl"):
+            self._session_ttl = SESSION_CACHE_TTL
+        if not hasattr(self, "_result_ttl"):
+            self._result_ttl = RESULT_CACHE_TTL
+
     # ── Session Cache ──────────────────────────────────────
 
     def cache_session(self, session_id: str, session_data: dict[str, Any]) -> bool:
